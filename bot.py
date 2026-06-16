@@ -64,27 +64,31 @@ COIN_EMOJI = {"LTC": "🪙", "SOL": "🟣", "ETH": "💎"}
 
 
 class BuyButton(discord.ui.Button):
-    def __init__(self, coin: str, meta: dict) -> None:
+    def __init__(self, product: dict, coin: str, meta: dict, *, row: int, multi: bool) -> None:
+        # With more than one product, show which product each button buys.
+        label = f"{product['name']} · {meta['name']}" if multi else f"Pay with {meta['name']}"
         super().__init__(
-            label=f"Pay with {meta['name']}",
+            label=label[:80],
             style=discord.ButtonStyle.secondary,
-            custom_id=f"buy_{coin.lower()}",
+            custom_id=f"buy_{product['id']}_{coin.lower()}",
             emoji=COIN_EMOJI.get(coin),
+            row=row,
         )
         self.coin = coin
+        self.product = product
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.client.open_ticket(interaction, self.coin)
+        await interaction.client.open_ticket(interaction, self.coin, self.product)
 
 
 class OtherButton(discord.ui.Button):
-    def __init__(self) -> None:
+    def __init__(self, row: int = 1) -> None:
         super().__init__(
             label="Pay with another method",
             style=discord.ButtonStyle.secondary,
             custom_id="buy_other",
             emoji="💬",
-            row=1,  # sits on its own row, below the coin buttons
+            row=row,  # sits on its own row, below the coin buttons
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -94,11 +98,16 @@ class OtherButton(discord.ui.Button):
 class PurchasePanel(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
-        # Only show buttons for coins that actually have an address configured.
-        for coin, meta in config.enabled_coins().items():
-            self.add_item(BuyButton(coin, meta))
+        enabled = config.enabled_coins()
+        products = config.PRODUCTS
+        multi = len(products) > 1
+        # One row of coin buttons per product (only coins with an address show).
+        for index, product in enumerate(products):
+            row = min(index, 3)
+            for coin, meta in enabled.items():
+                self.add_item(BuyButton(product, coin, meta, row=row, multi=multi))
         # A catch-all "other payment method" ticket below the coin buttons.
-        self.add_item(OtherButton())
+        self.add_item(OtherButton(row=min(len(products), 4)))
 
 
 class TicketControls(discord.ui.View):
@@ -265,7 +274,9 @@ class PaymentBot(discord.Client):
             f"Your ticket is ready: {channel.mention}", ephemeral=True
         )
 
-    async def open_ticket(self, interaction: discord.Interaction, coin: str) -> None:
+    async def open_ticket(
+        self, interaction: discord.Interaction, coin: str, product: dict
+    ) -> None:
         meta = config.COINS[coin]
         if not meta["address"]:
             await interaction.response.send_message(
@@ -276,14 +287,20 @@ class PaymentBot(discord.Client):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         user = interaction.user
+        price_usd = product["price_usd"]
 
-        # Reuse an existing open ticket for the same coin instead of spamming.
+        # Reuse an existing open ticket for the same product+coin (no spamming).
         for order in db.get_active_orders():
-            if order["user_id"] == user.id and order["coin"] == coin:
+            if (
+                order["user_id"] == user.id
+                and order["coin"] == coin
+                and order["product_name"] == product["name"]
+            ):
                 channel = self.get_channel(order["channel_id"])
                 if channel is not None:
                     await interaction.followup.send(
-                        f"You already have an open {coin} ticket: {channel.mention}",
+                        f"You already have an open {coin} ticket for "
+                        f"{product['name']}: {channel.mention}",
                         ephemeral=True,
                     )
                     return
@@ -291,7 +308,7 @@ class PaymentBot(discord.Client):
         # Quote the live price.
         try:
             coin_amount, coin_price = await prices.usd_to_coin(
-                self.session, meta["coingecko_id"], config.PRODUCT_PRICE_USD
+                self.session, meta["coingecko_id"], price_usd
             )
         except prices.PriceError as exc:
             await interaction.followup.send(
@@ -302,16 +319,18 @@ class PaymentBot(discord.Client):
         expected = payments.make_unique_amount(coin, coin_amount)
 
         channel = await self._create_ticket_channel(
-            guild, user, prefix=coin, reason=f"Crypto order ({coin}) for {user}"
+            guild, user, prefix=f"{product['id']}-{coin}",
+            reason=f"{product['name']} order ({coin}) for {user}",
         )
 
         order_id = db.create_order(
-            user.id, channel.id, coin, meta["address"], config.PRODUCT_PRICE_USD, expected
+            user.id, channel.id, coin, meta["address"], price_usd, expected,
+            product["name"],
         )
 
         amount_str = format_amount(expected, meta["decimals"])
         embed = discord.Embed(
-            title=f"🧾 Order #{order_id} — {config.PRODUCT_NAME}",
+            title=f"🧾 Order #{order_id} — {product['name']}",
             description=(
                 f"Send **exactly** the amount below in **{meta['name']} ({coin})**.\n"
                 "The amount is unique to your order — sending a different amount "
@@ -319,7 +338,7 @@ class PaymentBot(discord.Client):
             ),
             color=meta["color"],
         )
-        embed.add_field(name="Price", value=f"${config.PRODUCT_PRICE_USD:.2f} USD", inline=True)
+        embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
         embed.add_field(name=f"1 {coin}", value=f"≈ ${coin_price:,.2f}", inline=True)
         embed.add_field(name="​", value="​", inline=True)
         embed.add_field(name=f"Amount to send ({coin})", value=f"```{amount_str}```", inline=False)
@@ -379,7 +398,7 @@ class PaymentBot(discord.Client):
         embed = discord.Embed(
             title="✅ Payment confirmed!",
             description=(
-                f"Order **#{order['id']}** for **{config.PRODUCT_NAME}** is paid.\n"
+                f"Order **#{order['id']}** for **{order['product_name'] or config.PRODUCT_NAME}** is paid.\n"
                 f"Amount: `{format_amount(payment['amount'], meta['decimals'])} "
                 f"{order['coin']}`\nTx: `{payment['txid']}`"
             ),
@@ -440,13 +459,17 @@ async def panel_command(interaction: discord.Interaction) -> None:
         return
 
     coin_list = ", ".join(meta["name"] for meta in enabled.values())
+    product_lines = "\n".join(
+        f"**{p['name']}** — ${p['price_usd']:.2f}" for p in config.PRODUCTS
+    )
+    title = config.PRODUCT_NAME if len(config.PRODUCTS) == 1 else "Shop"
     embed = discord.Embed(
-        title=f"🛒 {config.PRODUCT_NAME}",
+        title=f"🛒 {title}",
         description=(
-            f"**Price: ${config.PRODUCT_PRICE_USD:.2f}** (paid in crypto)\n\n"
-            "Pick how you'd like to pay below. A private ticket will open with "
-            "payment details. Once your payment is confirmed on-chain, staff are "
-            f"automatically pinged to hand over your key.\n\n**Accepted:** {coin_list}"
+            f"{product_lines}\n\n"
+            "Pick a product + payment method below. A private ticket will open "
+            "with payment details. Once your payment is confirmed on-chain, staff "
+            f"are automatically pinged to hand over your key.\n\n**Accepted:** {coin_list}"
         ),
         color=0x5865F2,
     )

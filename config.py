@@ -47,6 +47,24 @@ TICKET_CATEGORY_ID = _int("TICKET_CATEGORY_ID")
 # --- Product ---------------------------------------------------------------
 PRODUCT_NAME = _get("PRODUCT_NAME", "Product")
 PRODUCT_PRICE_USD = _float("PRODUCT_PRICE_USD", "10")
+
+# A small permanent "test" product so you can run a cheap end-to-end test
+# without changing your real product. Set TEST_PRODUCT_ENABLED=false to hide it.
+TEST_PRODUCT_ENABLED = _get("TEST_PRODUCT_ENABLED", "true").lower() in (
+    "1", "true", "yes", "on"
+)
+TEST_PRODUCT_NAME = _get("TEST_PRODUCT_NAME", "test")
+TEST_PRODUCT_PRICE_USD = _float("TEST_PRODUCT_PRICE_USD", "1")
+
+# The list of products shown on the panel. Each is {id, name, price_usd}.
+PRODUCTS: list[dict] = [
+    {"id": "main", "name": PRODUCT_NAME, "price_usd": PRODUCT_PRICE_USD},
+]
+if TEST_PRODUCT_ENABLED:
+    PRODUCTS.append(
+        {"id": "test", "name": TEST_PRODUCT_NAME, "price_usd": TEST_PRODUCT_PRICE_USD}
+    )
+
 ORDER_EXPIRY_MINUTES = _int("ORDER_EXPIRY_MINUTES", "30")
 POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", "45")
 

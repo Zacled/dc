@@ -61,6 +61,7 @@ def init_db() -> None:
                 address         TEXT    NOT NULL,
                 usd_amount      REAL    NOT NULL,
                 expected_amount REAL    NOT NULL,
+                product_name    TEXT    NOT NULL DEFAULT '',
                 status          TEXT    NOT NULL DEFAULT 'pending',
                 txid            TEXT,
                 created_at      INTEGER NOT NULL,
@@ -68,6 +69,10 @@ def init_db() -> None:
             )
             """
         )
+        # Migrate older databases that predate the product_name column.
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(orders)").fetchall()]
+        if "product_name" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN product_name TEXT DEFAULT ''")
 
 
 def create_order(
@@ -77,6 +82,7 @@ def create_order(
     address: str,
     usd_amount: float,
     expected_amount: float,
+    product_name: str = "",
 ) -> int:
     now = int(time.time())
     with _lock, _conn() as conn:
@@ -84,10 +90,11 @@ def create_order(
             """
             INSERT INTO orders
                 (user_id, channel_id, coin, address, usd_amount, expected_amount,
-                 status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                 product_name, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
-            (user_id, channel_id, coin, address, usd_amount, expected_amount, now),
+            (user_id, channel_id, coin, address, usd_amount, expected_amount,
+             product_name, now),
         )
         return cur.lastrowid
 
