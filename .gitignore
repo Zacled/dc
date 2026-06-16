@@ -1,0 +1,16 @@
+# Secrets / config
+.env
+
+# Database
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store

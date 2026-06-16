@@ -1,0 +1,135 @@
+"""Tiny SQLite order store.
+
+Orders move through these statuses:
+    pending   -> created, waiting for a payment to appear on-chain
+    detected  -> a matching tx was seen but doesn't have enough confirmations yet
+    paid      -> confirmed; owner has been pinged to deliver the key
+    expired   -> went unpaid past ORDER_EXPIRY_MINUTES
+    cancelled -> ticket closed before payment
+
+Operations are small and fast, so plain (synchronous) sqlite3 is fine even
+inside the async bot.
+"""
+
+import sqlite3
+import threading
+import time
+
+DB_PATH = "orders.db"
+_lock = threading.Lock()
+
+
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id         INTEGER NOT NULL,
+                channel_id      INTEGER,
+                coin            TEXT    NOT NULL,
+                address         TEXT    NOT NULL,
+                usd_amount      REAL    NOT NULL,
+                expected_amount REAL    NOT NULL,
+                status          TEXT    NOT NULL DEFAULT 'pending',
+                txid            TEXT,
+                created_at      INTEGER NOT NULL,
+                paid_at         INTEGER
+            )
+            """
+        )
+
+
+def create_order(
+    user_id: int,
+    channel_id: int,
+    coin: str,
+    address: str,
+    usd_amount: float,
+    expected_amount: float,
+) -> int:
+    now = int(time.time())
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO orders
+                (user_id, channel_id, coin, address, usd_amount, expected_amount,
+                 status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (user_id, channel_id, coin, address, usd_amount, expected_amount, now),
+        )
+        return cur.lastrowid
+
+
+def get_order(order_id: int) -> sqlite3.Row | None:
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+
+
+def get_order_by_channel(channel_id: int) -> sqlite3.Row | None:
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE channel_id = ? ORDER BY id DESC LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+
+
+def get_active_orders() -> list[sqlite3.Row]:
+    """Orders still being watched (pending or detected-but-unconfirmed)."""
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE status IN ('pending', 'detected')"
+        ).fetchall()
+
+
+def get_pending_amounts(coin: str) -> set[float]:
+    """Expected amounts currently in use for a coin (to keep new ones unique)."""
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            "SELECT expected_amount FROM orders "
+            "WHERE coin = ? AND status IN ('pending', 'detected')",
+            (coin,),
+        ).fetchall()
+    return {row["expected_amount"] for row in rows}
+
+
+def get_used_txids() -> set[str]:
+    """Tx hashes already matched to an order, so we never double-credit one."""
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            "SELECT txid FROM orders WHERE txid IS NOT NULL"
+        ).fetchall()
+    return {row["txid"] for row in rows}
+
+
+def set_status(order_id: int, status: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE orders SET status = ? WHERE id = ?", (status, order_id)
+        )
+
+
+def mark_detected(order_id: int, txid: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE orders SET status = 'detected', txid = ? WHERE id = ?",
+            (txid, order_id),
+        )
+
+
+def mark_paid(order_id: int, txid: str) -> None:
+    now = int(time.time())
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE orders SET status = 'paid', txid = ?, paid_at = ? WHERE id = ?",
+            (txid, now, order_id),
+        )
