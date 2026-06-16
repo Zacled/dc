@@ -15,7 +15,9 @@ import sqlite3
 import threading
 import time
 
-DB_PATH = "orders.db"
+import config
+
+DB_PATH = config.DATABASE_PATH
 _lock = threading.Lock()
 
 

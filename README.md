@@ -72,6 +72,30 @@ In your server, run **`/panel`** (owner only). Done — buyers can now purchase.
 
 ---
 
+## Deploy to Railway (always-on, recommended)
+
+A Discord bot only works while it's running, so for a real shop host it
+somewhere that stays online. Railway is the easiest:
+
+1. Push this repo to GitHub.
+2. Go to <https://railway.app> → **New Project → Deploy from GitHub repo** →
+   pick this repo. Railway auto-detects Python and uses the included
+   `Procfile` (`worker: python bot.py`).
+3. Open the service → **Variables** tab and add the same keys from
+   `.env.example` (`DISCORD_TOKEN`, `GUILD_ID`, `OWNER_ID`, your wallet
+   addresses, `ETHERSCAN_API_KEY`, etc.). You do **not** upload a `.env` file —
+   Railway injects these as environment variables.
+4. **Persist orders:** add a **Volume** (e.g. mounted at `/data`) and set
+   `DATABASE_PATH=/data/orders.db`. Without this, the order log resets on every
+   redeploy.
+5. Deploy. Watch the **Logs** tab for `Logged in as …`, then run `/panel` in
+   your server.
+
+The same steps work on any host (Render, Fly.io, a VPS) — it's just a worker
+process that runs `python bot.py` with the env vars set.
+
+---
+
 ## API keys / endpoints
 
 | Coin | Source (default)        | Needs a key? |

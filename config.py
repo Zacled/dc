@@ -50,6 +50,10 @@ PRODUCT_PRICE_USD = _float("PRODUCT_PRICE_USD", "10")
 ORDER_EXPIRY_MINUTES = _int("ORDER_EXPIRY_MINUTES", "30")
 POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", "45")
 
+# Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
+# point this at a mounted volume path so orders survive redeploys.
+DATABASE_PATH = _get("DATABASE_PATH", "orders.db")
+
 # --- APIs ------------------------------------------------------------------
 ETHERSCAN_API_KEY = _get("ETHERSCAN_API_KEY", "")
 ETHERSCAN_API_URL = _get("ETHERSCAN_API_URL", "https://api.etherscan.io/v2/api")
