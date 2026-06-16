@@ -11,11 +11,15 @@ Operations are small and fast, so plain (synchronous) sqlite3 is fine even
 inside the async bot.
 """
 
+import logging
+import os
 import sqlite3
 import threading
 import time
 
 import config
+
+log = logging.getLogger("database")
 
 DB_PATH = config.DATABASE_PATH
 _lock = threading.Lock()
@@ -28,6 +32,24 @@ def _conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    # Make sure the directory for the DB exists (e.g. a mounted volume at /data).
+    # If it can't be created/used, fall back to the working directory so the bot
+    # still starts — it just won't persist orders across redeploys.
+    global DB_PATH
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError:
+            fallback = os.path.basename(DB_PATH) or "orders.db"
+            log.warning(
+                "Cannot use database path %s (is the volume mounted?). "
+                "Falling back to ./%s — orders won't persist across redeploys.",
+                DB_PATH,
+                fallback,
+            )
+            DB_PATH = fallback
+
     with _lock, _conn() as conn:
         conn.execute(
             """
