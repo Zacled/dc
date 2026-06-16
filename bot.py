@@ -60,36 +60,29 @@ def sanitize_channel_name(name: str) -> str:
 
 
 # --- Views (persistent across restarts) ------------------------------------
+COIN_EMOJI = {"LTC": "🪙", "SOL": "🟣", "ETH": "💎"}
+
+
+class BuyButton(discord.ui.Button):
+    def __init__(self, coin: str, meta: dict) -> None:
+        super().__init__(
+            label=f"Pay with {meta['name']}",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"buy_{coin.lower()}",
+            emoji=COIN_EMOJI.get(coin),
+        )
+        self.coin = coin
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.client.open_ticket(interaction, self.coin)
+
+
 class PurchasePanel(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Pay with Litecoin",
-        style=discord.ButtonStyle.secondary,
-        custom_id="buy_ltc",
-        emoji="🪙",
-    )
-    async def buy_ltc(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        await interaction.client.open_ticket(interaction, "LTC")
-
-    @discord.ui.button(
-        label="Pay with Solana",
-        style=discord.ButtonStyle.secondary,
-        custom_id="buy_sol",
-        emoji="🟣",
-    )
-    async def buy_sol(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        await interaction.client.open_ticket(interaction, "SOL")
-
-    @discord.ui.button(
-        label="Pay with Ethereum",
-        style=discord.ButtonStyle.secondary,
-        custom_id="buy_eth",
-        emoji="💎",
-    )
-    async def buy_eth(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        await interaction.client.open_ticket(interaction, "ETH")
+        # Only show buttons for coins that actually have an address configured.
+        for coin, meta in config.enabled_coins().items():
+            self.add_item(BuyButton(coin, meta))
 
 
 class TicketControls(discord.ui.View):
