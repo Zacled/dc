@@ -77,12 +77,28 @@ class BuyButton(discord.ui.Button):
         await interaction.client.open_ticket(interaction, self.coin)
 
 
+class OtherButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(
+            label="Pay with another method",
+            style=discord.ButtonStyle.secondary,
+            custom_id="buy_other",
+            emoji="💬",
+            row=1,  # sits on its own row, below the coin buttons
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.client.open_other_ticket(interaction)
+
+
 class PurchasePanel(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
         # Only show buttons for coins that actually have an address configured.
         for coin, meta in config.enabled_coins().items():
             self.add_item(BuyButton(coin, meta))
+        # A catch-all "other payment method" ticket below the coin buttons.
+        self.add_item(OtherButton())
 
 
 class TicketControls(discord.ui.View):
@@ -174,6 +190,81 @@ class PaymentBot(discord.Client):
         log.info("Accepting: %s", enabled)
 
     # --- Ticket creation ---------------------------------------------------
+    async def _create_ticket_channel(self, guild, user, *, prefix: str, reason: str):
+        """Create a private channel visible to the buyer, staff, and the bot."""
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            user: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            ),
+            guild.me: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            ),
+        }
+        if config.STAFF_ROLE_ID:
+            staff_role = guild.get_role(config.STAFF_ROLE_ID)
+            if staff_role:
+                overwrites[staff_role] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True
+                )
+
+        category = (
+            guild.get_channel(config.TICKET_CATEGORY_ID)
+            if config.TICKET_CATEGORY_ID
+            else None
+        )
+        return await guild.create_text_channel(
+            name=sanitize_channel_name(f"{prefix}-{user.name}"),
+            overwrites=overwrites,
+            category=category,
+            reason=reason,
+        )
+
+    async def open_other_ticket(self, interaction: discord.Interaction) -> None:
+        """Open a manual ticket for a non-crypto / 'other' payment method."""
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        user = interaction.user
+
+        # Reuse an existing open 'other' ticket instead of spamming new ones.
+        for order in db.get_active_orders():
+            if order["user_id"] == user.id and order["coin"] == "OTHER":
+                channel = self.get_channel(order["channel_id"])
+                if channel is not None:
+                    await interaction.followup.send(
+                        f"You already have an open ticket: {channel.mention}",
+                        ephemeral=True,
+                    )
+                    return
+
+        channel = await self._create_ticket_channel(
+            guild, user, prefix="other", reason=f"Other-payment ticket for {user}"
+        )
+        # Minimal order row so the buyer can close it and we don't reopen dupes.
+        db.create_order(
+            user.id, channel.id, "OTHER", "", config.PRODUCT_PRICE_USD, 0.0
+        )
+
+        embed = discord.Embed(
+            title=f"💬 {config.PRODUCT_NAME} — Other payment method",
+            description=(
+                "Thanks! You've opened a ticket to pay another way. "
+                "Staff will be with you shortly to arrange payment and delivery."
+            ),
+            color=0x5865F2,
+        )
+        embed.add_field(name="Price", value=f"${config.PRODUCT_PRICE_USD:.2f} USD", inline=True)
+        owner = f"<@{config.OWNER_ID}>" if config.OWNER_ID else ""
+        await channel.send(
+            content=f"{user.mention} {owner}".strip(),
+            embed=embed,
+            view=TicketControls(),
+            allowed_mentions=discord.AllowedMentions(users=True),
+        )
+        await interaction.followup.send(
+            f"Your ticket is ready: {channel.mention}", ephemeral=True
+        )
+
     async def open_ticket(self, interaction: discord.Interaction, coin: str) -> None:
         meta = config.COINS[coin]
         if not meta["address"]:
@@ -210,33 +301,8 @@ class PaymentBot(discord.Client):
 
         expected = payments.make_unique_amount(coin, coin_amount)
 
-        # Create the private ticket channel.
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            user: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True
-            ),
-        }
-        if config.STAFF_ROLE_ID:
-            staff_role = guild.get_role(config.STAFF_ROLE_ID)
-            if staff_role:
-                overwrites[staff_role] = discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, read_message_history=True
-                )
-
-        category = (
-            guild.get_channel(config.TICKET_CATEGORY_ID)
-            if config.TICKET_CATEGORY_ID
-            else None
-        )
-        channel = await guild.create_text_channel(
-            name=sanitize_channel_name(f"{coin}-{user.name}"),
-            overwrites=overwrites,
-            category=category,
-            reason=f"Crypto order ({coin}) for {user}",
+        channel = await self._create_ticket_channel(
+            guild, user, prefix=coin, reason=f"Crypto order ({coin}) for {user}"
         )
 
         order_id = db.create_order(
