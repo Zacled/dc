@@ -94,6 +94,12 @@ SUPPORT_TRANSCRIPT_CHANNEL_NAME = _get(
     "SUPPORT_TRANSCRIPT_CHANNEL_NAME", "support-old-tix"
 )
 
+# --- Invite tracking -------------------------------------------------------
+# Channel where join/leave + "invited by" messages are posted. Needs the
+# Server Members Intent and the bot to have "Manage Server" permission.
+INVITE_LOG_CHANNEL_ID = _int("INVITE_LOG_CHANNEL_ID")
+INVITE_LOG_CHANNEL_NAME = _get("INVITE_LOG_CHANNEL_NAME", "invite-log")
+
 # Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
 # point this at a mounted volume path so orders survive redeploys.
 DATABASE_PATH = _get("DATABASE_PATH", "orders.db")

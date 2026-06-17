@@ -87,6 +87,48 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS invites (
+                guild_id     INTEGER NOT NULL,
+                member_id    INTEGER NOT NULL,
+                inviter_id   INTEGER,
+                inviter_name TEXT,
+                joined_at    INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, member_id)
+            )
+            """
+        )
+
+
+# --- Invite tracking -------------------------------------------------------
+def record_invite(guild_id: int, member_id: int, inviter_id: int, inviter_name: str) -> None:
+    now = int(time.time())
+    with _lock, _conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO invites "
+            "(guild_id, member_id, inviter_id, inviter_name, joined_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (guild_id, member_id, inviter_id, inviter_name, now),
+        )
+
+
+def get_invite_record(guild_id: int, member_id: int) -> sqlite3.Row | None:
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM invites WHERE guild_id = ? AND member_id = ?",
+            (guild_id, member_id),
+        ).fetchone()
+
+
+def count_invites(guild_id: int, inviter_id: int) -> int:
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM invites WHERE guild_id = ? AND inviter_id = ?",
+            (guild_id, inviter_id),
+        ).fetchone()
+    return row[0] if row else 0
+
 
 # --- Support tickets -------------------------------------------------------
 def create_support_ticket(user_id: int, channel_id: int, reason: str) -> int:

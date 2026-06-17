@@ -304,14 +304,18 @@ class TranscriptControls(discord.ui.View):
 
 # --- Bot -------------------------------------------------------------------
 class PaymentBot(discord.Client):
-    def __init__(self, *, message_content: bool = True) -> None:
+    def __init__(self, *, privileged: bool = True) -> None:
         intents = discord.Intents.default()
-        # Needed to read what users type (for ticket transcripts). Also requires
-        # "Message Content Intent" to be enabled in the Discord Developer Portal.
-        intents.message_content = message_content
+        # message_content: read what users type (ticket transcripts).
+        # members: receive join/leave events (invite tracking).
+        # Both must also be enabled under Developer Portal -> Bot -> Privileged Intents.
+        intents.message_content = privileged
+        intents.members = privileged
         super().__init__(intents=intents)
         self.tree = discord.app_commands.CommandTree(self)
         self.session: aiohttp.ClientSession | None = None
+        # guild_id -> {invite_code: uses}, for detecting which invite was used.
+        self.invite_cache: dict[int, dict[str, int]] = {}
 
     async def setup_hook(self) -> None:
         db.init_db()
@@ -343,6 +347,82 @@ class PaymentBot(discord.Client):
             "Support role to ping: %s",
             config.SUPPORT_ROLE_ID or "NONE (set STAFF_ROLE_ID; will ping owner)",
         )
+        await self._cache_all_invites()
+
+    # --- Invite tracking ---------------------------------------------------
+    async def _cache_all_invites(self) -> None:
+        for guild in self.guilds:
+            try:
+                invites = await guild.invites()
+                self.invite_cache[guild.id] = {inv.code: inv.uses for inv in invites}
+            except discord.Forbidden:
+                log.warning(
+                    "Missing 'Manage Server' permission in %s — invite tracking off there.",
+                    guild.name,
+                )
+            except discord.HTTPException:
+                pass
+
+    def _invite_log_channel(self, guild):
+        if config.INVITE_LOG_CHANNEL_ID:
+            ch = guild.get_channel(config.INVITE_LOG_CHANNEL_ID)
+            if ch:
+                return ch
+        return discord.utils.get(guild.text_channels, name=config.INVITE_LOG_CHANNEL_NAME)
+
+    async def on_invite_create(self, invite: discord.Invite) -> None:
+        self.invite_cache.setdefault(invite.guild.id, {})[invite.code] = invite.uses or 0
+
+    async def on_invite_delete(self, invite: discord.Invite) -> None:
+        self.invite_cache.get(invite.guild.id, {}).pop(invite.code, None)
+
+    async def on_member_join(self, member: discord.Member) -> None:
+        guild = member.guild
+        inviter = None
+        try:
+            current = await guild.invites()
+        except (discord.Forbidden, discord.HTTPException):
+            current = None
+
+        if current is not None:
+            cached = self.invite_cache.get(guild.id, {})
+            for inv in current:
+                if (inv.uses or 0) > cached.get(inv.code, 0):
+                    inviter = inv.inviter
+                    break
+            self.invite_cache[guild.id] = {inv.code: inv.uses or 0 for inv in current}
+
+        channel = self._invite_log_channel(guild)
+        if inviter is not None:
+            db.record_invite(guild.id, member.id, inviter.id, inviter.name)
+            count = db.count_invites(guild.id, inviter.id)
+            text = (
+                f"📥 {member.mention} has been invited by **{inviter.name}** "
+                f"and now has **{count}** invite{'s' if count != 1 else ''}."
+            )
+        else:
+            db.record_invite(guild.id, member.id, 0, "unknown")
+            text = f"📥 {member.mention} joined — couldn't tell who invited them."
+
+        if channel is not None:
+            await channel.send(
+                text, allowed_mentions=discord.AllowedMentions(users=False)
+            )
+
+    async def on_member_remove(self, member: discord.Member) -> None:
+        guild = member.guild
+        channel = self._invite_log_channel(guild)
+        if channel is None:
+            return
+        rec = db.get_invite_record(guild.id, member.id)
+        if rec and rec["inviter_id"]:
+            text = (
+                f"📤 **{member.name}** left. They were invited by "
+                f"**{rec['inviter_name']}**."
+            )
+        else:
+            text = f"📤 **{member.name}** left."
+        await channel.send(text, allowed_mentions=discord.AllowedMentions(users=False))
 
     # --- Ticket creation ---------------------------------------------------
     async def _create_ticket_channel(self, guild, user, *, prefix: str, reason: str):
@@ -834,14 +914,15 @@ async def support_panel_command(interaction: discord.Interaction) -> None:
 
 def main() -> None:
     try:
-        PaymentBot(message_content=True).run(config.DISCORD_TOKEN)
+        PaymentBot(privileged=True).run(config.DISCORD_TOKEN)
     except discord.PrivilegedIntentsRequired:
         log.warning(
-            "Message Content Intent is OFF in the Discord Developer Portal — running "
-            "without it. Ticket transcripts won't capture users' messages until you "
-            "enable it (Developer Portal -> Bot -> Privileged Gateway Intents)."
+            "Privileged intents are OFF in the Discord Developer Portal — running "
+            "without them. Ticket transcripts (Message Content Intent) and invite "
+            "tracking (Server Members Intent) stay disabled until you enable both "
+            "under Developer Portal -> Bot -> Privileged Gateway Intents."
         )
-        PaymentBot(message_content=False).run(config.DISCORD_TOKEN)
+        PaymentBot(privileged=False).run(config.DISCORD_TOKEN)
 
 
 if __name__ == "__main__":
