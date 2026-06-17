@@ -9,6 +9,7 @@ Flow:
      can deliver the product key by hand.
 """
 
+import html
 import io
 import logging
 import re
@@ -88,6 +89,34 @@ def is_staff_member(user) -> bool:
         return True
     role_id = config.SUPPORT_ROLE_ID or config.STAFF_ROLE_ID
     return bool(role_id and any(r.id == role_id for r in getattr(user, "roles", [])))
+
+
+def _build_transcript_html(channel_name: str, entries: list[tuple[str, str, str]]) -> str:
+    """Render a Discord-style HTML transcript you can open in a browser."""
+    rows = []
+    for ts, author, text in entries:
+        body = html.escape(text).replace("\n", "<br>")
+        rows.append(
+            f'<div class="msg"><div class="head">'
+            f'<span class="author">{html.escape(author)}</span>'
+            f'<span class="time">{html.escape(ts)}</span></div>'
+            f'<div class="content">{body}</div></div>'
+        )
+    messages = "\n".join(rows) or '<div class="content">(no messages)</div>'
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>Transcript — #{html.escape(channel_name)}</title><style>"
+        "body{background:#313338;color:#dbdee1;font-family:'gg sans',Arial,sans-serif;"
+        "padding:24px;max-width:900px;margin:auto;}"
+        "h1{color:#fff;font-size:20px;border-bottom:1px solid #3f4147;padding-bottom:12px;}"
+        ".msg{padding:8px 0;border-bottom:1px solid #2b2d31;}"
+        ".author{font-weight:600;color:#f2f3f5;}"
+        ".time{color:#949ba4;font-size:12px;margin-left:10px;}"
+        ".content{white-space:pre-wrap;margin-top:3px;line-height:1.4;}"
+        "</style></head><body>"
+        f"<h1>📑 Transcript — #{html.escape(channel_name)}</h1>{messages}"
+        "</body></html>"
+    )
 
 
 # --- Views (persistent across restarts) ------------------------------------
@@ -379,37 +408,49 @@ class PaymentBot(discord.Client):
             return  # no transcript channel configured/found
 
         guild = channel.guild
-        lines: list[str] = []
+        entries: list[tuple[str, str, str]] = []  # (timestamp, author, text)
         try:
             async for msg in channel.history(limit=1000, oldest_first=True):
-                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                content = msg.clean_content or ""
+                ts = msg.created_at.strftime("%b %d, %Y %I:%M %p")
+                text = msg.clean_content or ""
                 for embed in msg.embeds:
                     parts = [p for p in (embed.title, embed.description) if p]
                     if parts:
-                        content += ("\n" if content else "") + resolve_mentions(
-                            " | ".join(parts), guild
+                        text += ("\n" if text else "") + resolve_mentions(
+                            "\n".join(parts), guild
                         )
                 for att in msg.attachments:
-                    content += ("\n" if content else "") + f"[attachment] {att.url}"
-                lines.append(f"[{ts}] {msg.author.display_name}: {content}")
+                    text += ("\n" if text else "") + f"[attachment] {att.url}"
+                entries.append((ts, msg.author.display_name, text))
         except discord.HTTPException:
             return
 
-        transcript = "\n".join(lines) or "(no messages)"
-        file = discord.File(
-            io.BytesIO(transcript.encode("utf-8")), filename=f"{channel.name}.txt"
+        # Inline preview so most tickets are readable without opening anything.
+        preview_blocks = [
+            f"**{author}**  ·  *{ts}*\n{text}" for ts, author, text in entries
+        ]
+        preview = "\n\n".join(preview_blocks) or "(no messages)"
+        if len(preview) > 3800:
+            preview = preview[:3800].rstrip() + "\n\n… *(full conversation in the file below)*"
+
+        html_file = discord.File(
+            io.BytesIO(_build_transcript_html(channel.name, entries).encode("utf-8")),
+            filename=f"{channel.name}.html",
         )
-        embed = discord.Embed(title=f"📑 Transcript — #{channel.name}", color=0x99AAB5)
+        embed = discord.Embed(
+            title=f"📑 Transcript — #{channel.name}",
+            description=preview,
+            color=0x99AAB5,
+        )
         embed.add_field(name="Closed by", value=str(closed_by), inline=True)
-        embed.add_field(name="Messages", value=str(len(lines)), inline=True)
+        embed.add_field(name="Messages", value=str(len(entries)), inline=True)
         # Encode the opener so the Reopen button knows who to recreate it for.
         view = None
         if opener_id:
             embed.set_footer(text=f"opener:{opener_id}")
             view = TranscriptControls()
         try:
-            await dest.send(embed=embed, file=file, view=view)
+            await dest.send(embed=embed, file=html_file, view=view)
         except discord.HTTPException:
             log.warning("Couldn't post transcript to #%s", config.TRANSCRIPT_CHANNEL_NAME)
 
@@ -430,12 +471,22 @@ class PaymentBot(discord.Client):
             )
             return
 
+        # get_member only sees cached members (we don't run the members intent),
+        # so fall back to a direct API fetch before giving up.
         member = guild.get_member(opener_id)
         if member is None:
-            await interaction.followup.send(
-                "That member is no longer in the server.", ephemeral=True
-            )
-            return
+            try:
+                member = await guild.fetch_member(opener_id)
+            except discord.NotFound:
+                await interaction.followup.send(
+                    "That member is no longer in the server.", ephemeral=True
+                )
+                return
+            except discord.HTTPException:
+                await interaction.followup.send(
+                    "Couldn't look up that member right now — try again.", ephemeral=True
+                )
+                return
 
         channel = await self._create_ticket_channel(
             guild, member, prefix="reopened",
