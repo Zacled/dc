@@ -180,7 +180,8 @@ class TicketControls(discord.ui.View):
 
         if order is not None and order["status"] in ("pending", "detected"):
             db.set_status(order["id"], "cancelled")
-        await interaction.response.send_message("Closing this ticket in 5 seconds…")
+        await interaction.response.send_message("Saving transcript and closing…")
+        await interaction.client._post_transcript(interaction.channel, interaction.user)
         await interaction.channel.delete(reason="Ticket closed")
 
 
@@ -232,7 +233,8 @@ class SupportTicketControls(discord.ui.View):
             return
         if ticket is not None:
             db.set_support_status(ticket["id"], "closed")
-        await interaction.response.send_message("Closing this ticket in 5 seconds…")
+        await interaction.response.send_message("Saving transcript and closing…")
+        await interaction.client._post_transcript(interaction.channel, interaction.user)
         await interaction.channel.delete(reason="Support ticket closed")
 
 
@@ -304,6 +306,45 @@ class PaymentBot(discord.Client):
             category=category,
             reason=reason,
         )
+
+    async def _post_transcript(self, channel: discord.TextChannel, closed_by) -> None:
+        """Save a ticket's messages to the transcript channel before deletion."""
+        dest = None
+        if config.TRANSCRIPT_CHANNEL_ID:
+            dest = self.get_channel(config.TRANSCRIPT_CHANNEL_ID)
+        if dest is None and channel.guild is not None:
+            dest = discord.utils.get(
+                channel.guild.text_channels, name=config.TRANSCRIPT_CHANNEL_NAME
+            )
+        if dest is None:
+            return  # no transcript channel configured/found
+
+        lines: list[str] = []
+        try:
+            async for msg in channel.history(limit=1000, oldest_first=True):
+                ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
+                content = msg.content or ""
+                for embed in msg.embeds:
+                    parts = [p for p in (embed.title, embed.description) if p]
+                    if parts:
+                        content += ("\n" if content else "") + " | ".join(parts)
+                for att in msg.attachments:
+                    content += ("\n" if content else "") + f"[attachment] {att.url}"
+                lines.append(f"[{ts}] {msg.author}: {content}")
+        except discord.HTTPException:
+            return
+
+        transcript = "\n".join(lines) or "(no messages)"
+        file = discord.File(
+            io.BytesIO(transcript.encode("utf-8")), filename=f"{channel.name}.txt"
+        )
+        embed = discord.Embed(title=f"📑 Transcript — #{channel.name}", color=0x99AAB5)
+        embed.add_field(name="Closed by", value=str(closed_by), inline=True)
+        embed.add_field(name="Messages", value=str(len(lines)), inline=True)
+        try:
+            await dest.send(embed=embed, file=file)
+        except discord.HTTPException:
+            log.warning("Couldn't post transcript to #%s", config.TRANSCRIPT_CHANNEL_NAME)
 
     async def open_other_ticket(self, interaction: discord.Interaction) -> None:
         """Open a manual ticket for a non-crypto / 'other' payment method."""

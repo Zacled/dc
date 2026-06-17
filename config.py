@@ -72,14 +72,20 @@ POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", "45")
 # --- Support tickets -------------------------------------------------------
 # Role pinged when a support ticket opens. Defaults to STAFF_ROLE_ID if set.
 SUPPORT_ROLE_ID = _int("SUPPORT_ROLE_ID") or STAFF_ROLE_ID
-# Reasons shown in the support panel dropdown (comma-separated to override).
+# Reasons shown in the support panel buttons (comma-separated to override).
 SUPPORT_REASONS = [
     r.strip()
     for r in _get(
-        "SUPPORT_REASONS", "Payment issue,Question,Report a user,Other"
+        "SUPPORT_REASONS", "Payment issue,Question,Feedback,Other"
     ).split(",")
     if r.strip()
 ]
+
+# --- Transcripts -----------------------------------------------------------
+# When a ticket is closed, a transcript is posted to this channel.
+# Set TRANSCRIPT_CHANNEL_ID, or the bot finds a channel named TRANSCRIPT_CHANNEL_NAME.
+TRANSCRIPT_CHANNEL_ID = _int("TRANSCRIPT_CHANNEL_ID")
+TRANSCRIPT_CHANNEL_NAME = _get("TRANSCRIPT_CHANNEL_NAME", "old-tix")
 
 # Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
 # point this at a mounted volume path so orders survive redeploys.
