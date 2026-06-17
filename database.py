@@ -100,6 +100,47 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS key_links (
+                jti        TEXT PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                label      TEXT,
+                guild_id   INTEGER,
+                last_warn  INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+
+# --- License key links (jti -> buyer) --------------------------------------
+def link_key(jti: str, user_id: int, label: str, guild_id: int) -> None:
+    with _lock, _conn() as conn:
+        # Keep last_warn if the key is being re-linked, so we don't re-DM old warnings.
+        conn.execute(
+            """
+            INSERT INTO key_links (jti, user_id, label, guild_id, last_warn)
+            VALUES (?, ?, ?, ?, 0)
+            ON CONFLICT(jti) DO UPDATE SET
+                user_id = excluded.user_id,
+                label = excluded.label,
+                guild_id = excluded.guild_id
+            """,
+            (jti, user_id, label, guild_id),
+        )
+
+
+def get_key_links() -> list[sqlite3.Row]:
+    with _lock, _conn() as conn:
+        return conn.execute("SELECT * FROM key_links").fetchall()
+
+
+def set_key_last_warn(jti: str, last_warn: int) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE key_links SET last_warn = ? WHERE jti = ?", (last_warn, jti)
+        )
+
 
 # --- Invite tracking -------------------------------------------------------
 def record_invite(guild_id: int, member_id: int, inviter_id: int, inviter_name: str) -> None:

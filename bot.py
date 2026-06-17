@@ -9,7 +9,9 @@ Flow:
      can deliver the product key by hand.
 """
 
+import base64
 import io
+import json
 import logging
 import re
 
@@ -94,6 +96,14 @@ def is_staff_member(user) -> bool:
         return True
     role_id = config.SUPPORT_ROLE_ID or config.STAFF_ROLE_ID
     return bool(role_id and any(r.id == role_id for r in getattr(user, "roles", [])))
+
+
+def decode_key(code: str) -> tuple[str, str]:
+    """Pull (jti, label) out of a license code (base64url payload before the '.')."""
+    payload_b64 = code.strip().split(".")[0]
+    padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+    obj = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    return obj.get("jti", ""), obj.get("id", "")
 
 
 # --- Views (persistent across restarts) ------------------------------------
@@ -374,6 +384,7 @@ class PaymentBot(discord.Client):
 
         self.tree.add_command(panel_command)
         self.tree.add_command(support_panel_command)
+        self.tree.add_command(linkkey_command)
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -382,6 +393,8 @@ class PaymentBot(discord.Client):
             await self.tree.sync()
 
         self.payment_watcher.start()
+        if config.PANTRY_ID:
+            self.warning_watcher.start()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (id=%s)", self.user, self.user.id)
@@ -940,6 +953,99 @@ class PaymentBot(discord.Client):
     async def _before_watcher(self) -> None:
         await self.wait_until_ready()
 
+    # --- Key-sharing warning watcher ---------------------------------------
+    def _warnings_channel(self, guild_id: int | None):
+        if config.WARNINGS_CHANNEL_ID:
+            ch = self.get_channel(config.WARNINGS_CHANNEL_ID)
+            if ch:
+                return ch
+        guilds = [self.get_guild(guild_id)] if guild_id else self.guilds
+        for g in guilds:
+            if g:
+                ch = discord.utils.get(g.text_channels, name=config.WARNINGS_CHANNEL_NAME)
+                if ch:
+                    return ch
+        return None
+
+    async def check_warnings(self) -> None:
+        if not config.PANTRY_ID or self.session is None:
+            return
+        links = db.get_key_links()
+        if not links:
+            return
+        url = f"https://getpantry.cloud/apiv1/pantry/{config.PANTRY_ID}/basket/wpbind"
+        try:
+            async with self.session.get(
+                url, headers={"Content-Type": "application/json"}, timeout=30
+            ) as resp:
+                if resp.status != 200:
+                    return  # 400 = basket not created yet; ignore
+                bindings = await resp.json()
+        except Exception:  # noqa: BLE001
+            return
+
+        for link in links:
+            entry = bindings.get(link["jti"]) if isinstance(bindings, dict) else None
+            w = entry.get("w", 0) if isinstance(entry, dict) else 0
+            if w > link["last_warn"]:
+                await self._send_warning(link, w)
+                db.set_key_last_warn(link["jti"], w)
+
+    async def _send_warning(self, link, w: int) -> None:
+        level = min(w, 3)
+        name = link["label"] or "your key"
+        if level >= 3:
+            dm = (
+                "🚫 **Warning 3/3 — final.** Your key was used on too many other "
+                "computers and has been **automatically revoked**. If you think this "
+                "is a mistake, open a support ticket."
+            )
+        elif level == 2:
+            dm = (
+                "⚠️ **Warning 2/3.** Your key is locked to one computer and was used "
+                "on another device again. **One more and it gets revoked** — do not "
+                "share your key."
+            )
+        else:
+            dm = (
+                "⚠️ **Warning 1/3.** Your key is locked to a single computer and was "
+                "just used on a different device. **Do not share your key** or it will "
+                "be revoked."
+            )
+
+        # DM the buyer.
+        user = self.get_user(link["user_id"])
+        if user is None:
+            try:
+                user = await self.fetch_user(link["user_id"])
+            except discord.HTTPException:
+                user = None
+        if user is not None:
+            try:
+                await user.send(dm)
+            except discord.HTTPException:
+                pass  # buyer has DMs closed
+
+        # Log it in the warnings channel.
+        channel = self._warnings_channel(link["guild_id"])
+        if channel is not None:
+            suffix = " — **auto-revoked** 🚫" if level >= 3 else ""
+            await channel.send(
+                f"⚠️ <@{link['user_id']}> (`{name}`) hit **Warning {level}/3**{suffix}",
+                allowed_mentions=discord.AllowedMentions(users=False),
+            )
+
+    @tasks.loop(seconds=config.WARNING_POLL_SECONDS)
+    async def warning_watcher(self) -> None:
+        try:
+            await self.check_warnings()
+        except Exception:  # noqa: BLE001
+            log.exception("warning_watcher pass failed")
+
+    @warning_watcher.before_loop
+    async def _before_warning_watcher(self) -> None:
+        await self.wait_until_ready()
+
 
 # --- Slash command ---------------------------------------------------------
 @discord.app_commands.command(
@@ -1000,6 +1106,40 @@ async def support_panel_command(interaction: discord.Interaction) -> None:
     )
     embed.set_footer(text="One ticket per person — staff will respond as soon as they can.")
     await interaction.response.send_message(embed=embed, view=SupportPanel())
+
+
+@discord.app_commands.command(
+    name="linkkey",
+    description="Link a license key to a buyer so they're warned if it's shared (staff only).",
+)
+@discord.app_commands.describe(
+    code="The license code you gave the buyer",
+    user="The buyer who received the key",
+)
+async def linkkey_command(
+    interaction: discord.Interaction, code: str, user: discord.User
+) -> None:
+    if not is_staff_member(interaction.user):
+        await interaction.response.send_message(
+            "Only staff can link keys.", ephemeral=True
+        )
+        return
+    try:
+        jti, label = decode_key(code)
+    except Exception:  # noqa: BLE001
+        jti, label = "", ""
+    if not jti:
+        await interaction.response.send_message(
+            "That doesn't look like a valid license code.", ephemeral=True
+        )
+        return
+    db.link_key(jti, user.id, label, interaction.guild_id)
+    await interaction.response.send_message(
+        f"🔗 Linked key **{label or jti[:8]}** to {user.mention}. "
+        "They'll be DM'd (and it'll post in the warnings channel) if it's shared.",
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions(users=False),
+    )
 
 
 def main() -> None:

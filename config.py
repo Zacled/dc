@@ -87,6 +87,14 @@ SUPPORT_TRANSCRIPT_CHANNEL_NAME = _get(
 INVITE_LOG_CHANNEL_ID = _int("INVITE_LOG_CHANNEL_ID")
 INVITE_LOG_CHANNEL_NAME = _get("INVITE_LOG_CHANNEL_NAME", "invite-log")
 
+# --- Key-sharing warnings --------------------------------------------------
+# The bot reads the extension's Pantry "wpbind" basket to see each code's
+# warning count, then DMs the linked buyer + posts in the warnings channel.
+PANTRY_ID = _get("PANTRY_ID", "")
+WARNINGS_CHANNEL_ID = _int("WARNINGS_CHANNEL_ID")
+WARNINGS_CHANNEL_NAME = _get("WARNINGS_CHANNEL_NAME", "warnings")
+WARNING_POLL_SECONDS = _int("WARNING_POLL_SECONDS", "60")
+
 # Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
 # point this at a mounted volume path so orders survive redeploys.
 DATABASE_PATH = _get("DATABASE_PATH", "orders.db")
