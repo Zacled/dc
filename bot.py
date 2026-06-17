@@ -49,8 +49,11 @@ def payment_uri(coin: str, address: str, amount: float) -> str:
     return f"{meta['uri_scheme']}:{address}?amount={amount:.{meta['decimals']}f}"
 
 
-def make_qr_file(data: str) -> discord.File:
-    img = qrcode.make(data)
+def make_qr_file(data: str, box_size: int = 6) -> discord.File:
+    qr = qrcode.QRCode(box_size=box_size, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
@@ -819,10 +822,7 @@ class PaymentBot(discord.Client):
         amount_str = format_amount(expected, meta["decimals"])
         embed = discord.Embed(
             title=f"🧾 Order #{order_id} — {product['name']}",
-            description=(
-                f"Pay in **{meta['name']}**, follow the instructions below.\n"
-                "*Tap the QR code to enlarge it.*"
-            ),
+            description=f"Pay in **{meta['name']}**, follow the instructions below.",
             color=meta["color"],
         )
         embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
@@ -847,18 +847,20 @@ class PaymentBot(discord.Client):
             ),
             inline=False,
         )
-        embed.set_thumbnail(url="attachment://payment.png")  # small QR (tap to enlarge)
         embed.set_footer(text=f"Expires in {config.ORDER_EXPIRY_MINUTES} min · Order #{order_id}")
 
-        qr = make_qr_file(payment_uri(coin, meta["address"], expected))
         await channel.send(
-            content=user.mention, embed=embed, file=qr, view=TicketControls()
+            content=user.mention, embed=embed, view=TicketControls()
         )
+        # Small QR as its own message, with the "enlarge" caption right below it.
+        qr = make_qr_file(payment_uri(coin, meta["address"], expected))
+        await channel.send(file=qr)
+        await channel.send("🔍 *Tap the QR above to enlarge / scan it.*")
         # Plain, single-value messages so mobile users can long-press -> Copy Text
         # and get exactly the amount / address (embeds aren't copyable on mobile).
-        await channel.send(f"⬇️ **Exact amount** (long-press → Copy Text)")
+        await channel.send("⬇️ **Exact amount** (long-press → Copy Text)")
         await channel.send(amount_str)
-        await channel.send(f"⬇️ **Address** (long-press → Copy Text)")
+        await channel.send("⬇️ **Address** (long-press → Copy Text)")
         await channel.send(meta["address"])
         await interaction.followup.send(
             f"Your {meta['name']} ticket is ready: {channel.mention}", ephemeral=True
