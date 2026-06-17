@@ -59,6 +59,37 @@ def sanitize_channel_name(name: str) -> str:
     return cleaned[:90] or "buyer"
 
 
+def resolve_mentions(text: str, guild) -> str:
+    """Turn raw <@id>/<@&id>/<#id> mentions into readable @names / #names."""
+    if not text or guild is None:
+        return text
+
+    def user(m):
+        member = guild.get_member(int(m.group(1)))
+        return f"@{member.display_name}" if member else m.group(0)
+
+    def role(m):
+        r = guild.get_role(int(m.group(1)))
+        return f"@{r.name}" if r else m.group(0)
+
+    def chan(m):
+        c = guild.get_channel(int(m.group(1)))
+        return f"#{c.name}" if c else m.group(0)
+
+    text = re.sub(r"<@!?(\d+)>", user, text)
+    text = re.sub(r"<@&(\d+)>", role, text)
+    text = re.sub(r"<#(\d+)>", chan, text)
+    return text
+
+
+def is_staff_member(user) -> bool:
+    """True if the user is the owner or has the staff/support role."""
+    if user.id == config.OWNER_ID:
+        return True
+    role_id = config.SUPPORT_ROLE_ID or config.STAFF_ROLE_ID
+    return bool(role_id and any(r.id == role_id for r in getattr(user, "roles", [])))
+
+
 # --- Views (persistent across restarts) ------------------------------------
 COIN_EMOJI = {"LTC": "🪙", "SOL": "🟣", "ETH": "💎"}
 
@@ -181,7 +212,10 @@ class TicketControls(discord.ui.View):
         if order is not None and order["status"] in ("pending", "detected"):
             db.set_status(order["id"], "cancelled")
         await interaction.response.send_message("Saving transcript and closing…")
-        await interaction.client._post_transcript(interaction.channel, interaction.user)
+        opener_id = order["user_id"] if order is not None else None
+        await interaction.client._post_transcript(
+            interaction.channel, interaction.user, opener_id=opener_id
+        )
         await interaction.channel.delete(reason="Ticket closed")
 
 
@@ -234,8 +268,30 @@ class SupportTicketControls(discord.ui.View):
         if ticket is not None:
             db.set_support_status(ticket["id"], "closed")
         await interaction.response.send_message("Saving transcript and closing…")
-        await interaction.client._post_transcript(interaction.channel, interaction.user)
+        opener_id = ticket["user_id"] if ticket is not None else None
+        await interaction.client._post_transcript(
+            interaction.channel, interaction.user, opener_id=opener_id
+        )
         await interaction.channel.delete(reason="Support ticket closed")
+
+
+class TranscriptControls(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Reopen ticket",
+        style=discord.ButtonStyle.success,
+        custom_id="transcript_reopen",
+        emoji="🔓",
+    )
+    async def reopen(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        if not is_staff_member(interaction.user):
+            await interaction.response.send_message(
+                "Only staff can reopen a ticket.", ephemeral=True
+            )
+            return
+        await interaction.client.reopen_from_transcript(interaction)
 
 
 # --- Bot -------------------------------------------------------------------
@@ -255,6 +311,7 @@ class PaymentBot(discord.Client):
         self.add_view(TicketControls())
         self.add_view(SupportPanel())
         self.add_view(SupportTicketControls())
+        self.add_view(TranscriptControls())
 
         self.tree.add_command(panel_command)
         self.tree.add_command(support_panel_command)
@@ -307,7 +364,9 @@ class PaymentBot(discord.Client):
             reason=reason,
         )
 
-    async def _post_transcript(self, channel: discord.TextChannel, closed_by) -> None:
+    async def _post_transcript(
+        self, channel: discord.TextChannel, closed_by, *, opener_id: int | None = None
+    ) -> None:
         """Save a ticket's messages to the transcript channel before deletion."""
         dest = None
         if config.TRANSCRIPT_CHANNEL_ID:
@@ -319,18 +378,21 @@ class PaymentBot(discord.Client):
         if dest is None:
             return  # no transcript channel configured/found
 
+        guild = channel.guild
         lines: list[str] = []
         try:
             async for msg in channel.history(limit=1000, oldest_first=True):
                 ts = msg.created_at.strftime("%Y-%m-%d %H:%M")
-                content = msg.content or ""
+                content = msg.clean_content or ""
                 for embed in msg.embeds:
                     parts = [p for p in (embed.title, embed.description) if p]
                     if parts:
-                        content += ("\n" if content else "") + " | ".join(parts)
+                        content += ("\n" if content else "") + resolve_mentions(
+                            " | ".join(parts), guild
+                        )
                 for att in msg.attachments:
                     content += ("\n" if content else "") + f"[attachment] {att.url}"
-                lines.append(f"[{ts}] {msg.author}: {content}")
+                lines.append(f"[{ts}] {msg.author.display_name}: {content}")
         except discord.HTTPException:
             return
 
@@ -341,10 +403,75 @@ class PaymentBot(discord.Client):
         embed = discord.Embed(title=f"📑 Transcript — #{channel.name}", color=0x99AAB5)
         embed.add_field(name="Closed by", value=str(closed_by), inline=True)
         embed.add_field(name="Messages", value=str(len(lines)), inline=True)
+        # Encode the opener so the Reopen button knows who to recreate it for.
+        view = None
+        if opener_id:
+            embed.set_footer(text=f"opener:{opener_id}")
+            view = TranscriptControls()
         try:
-            await dest.send(embed=embed, file=file)
+            await dest.send(embed=embed, file=file, view=view)
         except discord.HTTPException:
             log.warning("Couldn't post transcript to #%s", config.TRANSCRIPT_CHANNEL_NAME)
+
+    async def reopen_from_transcript(self, interaction: discord.Interaction) -> None:
+        """Recreate a ticket for the original opener and re-attach the transcript."""
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        # The opener id is stashed in the transcript embed's footer.
+        opener_id = None
+        if interaction.message.embeds:
+            footer = interaction.message.embeds[0].footer.text or ""
+            if footer.startswith("opener:"):
+                opener_id = int(footer.split(":", 1)[1])
+        if not opener_id:
+            await interaction.followup.send(
+                "Couldn't find who this ticket belonged to.", ephemeral=True
+            )
+            return
+
+        member = guild.get_member(opener_id)
+        if member is None:
+            await interaction.followup.send(
+                "That member is no longer in the server.", ephemeral=True
+            )
+            return
+
+        channel = await self._create_ticket_channel(
+            guild, member, prefix="reopened",
+            reason=f"Ticket reopened by {interaction.user}",
+        )
+        db.create_support_ticket(member.id, channel.id, "Reopened")
+
+        ping = f"<@&{config.SUPPORT_ROLE_ID}>" if config.SUPPORT_ROLE_ID else ""
+        embed = discord.Embed(
+            title="🔓 Ticket reopened",
+            description=(
+                f"This ticket was reopened by {interaction.user.mention}. The previous "
+                "chat log is attached below."
+            ),
+            color=0x2ECC71,
+        )
+        # Re-attach the saved transcript so the old chats come along.
+        files = []
+        if interaction.message.attachments:
+            try:
+                files = [await interaction.message.attachments[0].to_file()]
+            except discord.HTTPException:
+                files = []
+        await channel.send(
+            content=f"{member.mention} {ping}".strip(),
+            embed=embed,
+            view=SupportTicketControls(),
+            files=files,
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=[discord.Object(id=config.SUPPORT_ROLE_ID)] if config.SUPPORT_ROLE_ID else False,
+            ),
+        )
+        await interaction.followup.send(
+            f"Reopened: {channel.mention}", ephemeral=True
+        )
 
     async def open_other_ticket(self, interaction: discord.Interaction) -> None:
         """Open a manual ticket for a non-crypto / 'other' payment method."""
