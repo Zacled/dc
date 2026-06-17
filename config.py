@@ -82,10 +82,17 @@ SUPPORT_REASONS = [
 ]
 
 # --- Transcripts -----------------------------------------------------------
-# When a ticket is closed, a transcript is posted to this channel.
-# Set TRANSCRIPT_CHANNEL_ID, or the bot finds a channel named TRANSCRIPT_CHANNEL_NAME.
-TRANSCRIPT_CHANNEL_ID = _int("TRANSCRIPT_CHANNEL_ID")
-TRANSCRIPT_CHANNEL_NAME = _get("TRANSCRIPT_CHANNEL_NAME", "old-tix")
+# When a ticket is closed, its transcript is posted to a channel. Purchase/order
+# tickets and support tickets go to separate channels. Set the *_ID to target a
+# specific channel, otherwise the bot finds one by *_NAME.
+PURCHASE_TRANSCRIPT_CHANNEL_ID = _int("PURCHASE_TRANSCRIPT_CHANNEL_ID")
+PURCHASE_TRANSCRIPT_CHANNEL_NAME = _get(
+    "PURCHASE_TRANSCRIPT_CHANNEL_NAME", "purchase-old-tix"
+)
+SUPPORT_TRANSCRIPT_CHANNEL_ID = _int("SUPPORT_TRANSCRIPT_CHANNEL_ID")
+SUPPORT_TRANSCRIPT_CHANNEL_NAME = _get(
+    "SUPPORT_TRANSCRIPT_CHANNEL_NAME", "support-old-tix"
+)
 
 # Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
 # point this at a mounted volume path so orders survive redeploys.

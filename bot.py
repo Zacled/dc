@@ -243,7 +243,11 @@ class TicketControls(discord.ui.View):
         await interaction.response.send_message("Saving transcript and closing…")
         opener_id = order["user_id"] if order is not None else None
         await interaction.client._post_transcript(
-            interaction.channel, interaction.user, opener_id=opener_id
+            interaction.channel,
+            interaction.user,
+            opener_id=opener_id,
+            dest_id=config.PURCHASE_TRANSCRIPT_CHANNEL_ID,
+            dest_name=config.PURCHASE_TRANSCRIPT_CHANNEL_NAME,
         )
         await interaction.channel.delete(reason="Ticket closed")
 
@@ -299,7 +303,11 @@ class SupportTicketControls(discord.ui.View):
         await interaction.response.send_message("Saving transcript and closing…")
         opener_id = ticket["user_id"] if ticket is not None else None
         await interaction.client._post_transcript(
-            interaction.channel, interaction.user, opener_id=opener_id
+            interaction.channel,
+            interaction.user,
+            opener_id=opener_id,
+            dest_id=config.SUPPORT_TRANSCRIPT_CHANNEL_ID,
+            dest_name=config.SUPPORT_TRANSCRIPT_CHANNEL_NAME,
         )
         await interaction.channel.delete(reason="Support ticket closed")
 
@@ -397,16 +405,20 @@ class PaymentBot(discord.Client):
         )
 
     async def _post_transcript(
-        self, channel: discord.TextChannel, closed_by, *, opener_id: int | None = None
+        self,
+        channel: discord.TextChannel,
+        closed_by,
+        *,
+        opener_id: int | None = None,
+        dest_id: int = 0,
+        dest_name: str = "",
     ) -> None:
-        """Save a ticket's messages to the transcript channel before deletion."""
+        """Save a ticket's messages to the given transcript channel before deletion."""
         dest = None
-        if config.TRANSCRIPT_CHANNEL_ID:
-            dest = self.get_channel(config.TRANSCRIPT_CHANNEL_ID)
-        if dest is None and channel.guild is not None:
-            dest = discord.utils.get(
-                channel.guild.text_channels, name=config.TRANSCRIPT_CHANNEL_NAME
-            )
+        if dest_id:
+            dest = self.get_channel(dest_id)
+        if dest is None and dest_name and channel.guild is not None:
+            dest = discord.utils.get(channel.guild.text_channels, name=dest_name)
         if dest is None:
             return  # no transcript channel configured/found
 
@@ -455,7 +467,7 @@ class PaymentBot(discord.Client):
         try:
             await dest.send(embed=embed, file=html_file, view=view)
         except discord.HTTPException:
-            log.warning("Couldn't post transcript to #%s", config.TRANSCRIPT_CHANNEL_NAME)
+            log.warning("Couldn't post transcript to #%s", dest.name)
 
     async def reopen_from_transcript(self, interaction: discord.Interaction) -> None:
         """Recreate a ticket for the original opener and re-attach the transcript."""
