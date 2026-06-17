@@ -161,6 +161,23 @@ class TicketControls(discord.ui.View):
             )
             return
 
+        # Once a payment has been sent/confirmed, don't let the buyer close the
+        # ticket — they could accidentally close it before getting their item.
+        # Staff can still close it (after delivering).
+        if (
+            is_buyer
+            and not is_staff
+            and order is not None
+            and order["status"] in ("detected", "paid")
+        ):
+            await interaction.response.send_message(
+                "💸 Your payment is being processed — please **wait for staff** to "
+                "deliver your item before closing. A staff member will close this "
+                "ticket once you're sorted.",
+                ephemeral=True,
+            )
+            return
+
         if order is not None and order["status"] in ("pending", "detected"):
             db.set_status(order["id"], "cancelled")
         await interaction.response.send_message("Closing this ticket in 5 seconds…")
