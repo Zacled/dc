@@ -189,10 +189,158 @@ _FETCHERS = {
 }
 
 
-async def fetch_incoming(
-    coin: str, session: aiohttp.ClientSession, address: str
+# --- USDC on Ethereum (ERC-20, via Etherscan tokentx) ----------------------
+async def fetch_erc20_incoming(
+    session: aiohttp.ClientSession, address: str, contract: str
 ) -> list[dict]:
-    fetcher = _FETCHERS.get(coin)
-    if fetcher is None:
-        raise ValueError(f"No fetcher for coin {coin}")
-    return await fetcher(session, address)
+    params = {
+        "chainid": config.ETHERSCAN_CHAIN_ID,
+        "module": "account",
+        "action": "tokentx",
+        "contractaddress": contract,
+        "address": address,
+        "sort": "desc",
+        "apikey": config.ETHERSCAN_API_KEY,
+    }
+    async with session.get(config.ETHERSCAN_API_URL, params=params, timeout=30) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    payments: list[dict] = []
+    if str(data.get("status")) != "1":
+        return payments
+
+    addr_lower = address.lower()
+    for tx in data.get("result", []):
+        if tx.get("to", "").lower() != addr_lower:
+            continue
+        try:
+            decimals = int(tx.get("tokenDecimal", 6))
+            amount = int(tx["value"]) / (10**decimals)
+        except (KeyError, ValueError):
+            continue
+        payments.append(
+            {
+                "txid": tx["hash"],
+                "amount": amount,
+                "confirmations": int(tx.get("confirmations", 0)),
+                "timestamp": int(tx["timeStamp"]) if tx.get("timeStamp") else None,
+            }
+        )
+    return payments
+
+
+# --- USDT on Tron (TRC-20, via TronGrid) -----------------------------------
+async def fetch_trc20_incoming(
+    session: aiohttp.ClientSession, address: str, contract: str
+) -> list[dict]:
+    url = f"{config.TRONGRID_API_URL}/v1/accounts/{address}/transactions/trc20"
+    params = {
+        "only_to": "true",
+        "only_confirmed": "true",
+        "limit": 50,
+        "contract_address": contract,
+    }
+    headers = {}
+    if config.TRONGRID_API_KEY:
+        headers["TRON-PRO-API-KEY"] = config.TRONGRID_API_KEY
+
+    async with session.get(url, params=params, headers=headers, timeout=30) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    payments: list[dict] = []
+    for tx in data.get("data", []):
+        if tx.get("to") != address:
+            continue
+        try:
+            decimals = tx.get("token_info", {}).get("decimals", 6)
+            amount = int(tx["value"]) / (10**decimals)
+        except (KeyError, ValueError, TypeError):
+            continue
+        ts = tx.get("block_timestamp")
+        payments.append(
+            {
+                "txid": tx["transaction_id"],
+                "amount": amount,
+                "confirmations": 1,  # only_confirmed=true
+                "timestamp": int(ts) // 1000 if ts else None,
+            }
+        )
+    return payments
+
+
+# --- USDC on Solana (SPL token, via RPC token-balance deltas) ---------------
+async def fetch_spl_incoming(
+    session: aiohttp.ClientSession, owner: str, mint: str
+) -> list[dict]:
+    accounts = await _solana_rpc(
+        session,
+        "getTokenAccountsByOwner",
+        [owner, {"mint": mint}, {"encoding": "jsonParsed"}],
+    )
+    if not accounts or not accounts.get("value"):
+        return []  # buyer's token account doesn't exist until first payment lands
+
+    payments: list[dict] = []
+    for acc in accounts["value"]:
+        ata = acc["pubkey"]
+        sigs = await _solana_rpc(
+            session, "getSignaturesForAddress", [ata, {"limit": 15}]
+        )
+        for sig_info in sigs or []:
+            if sig_info.get("err"):
+                continue
+            tx = await _solana_rpc(
+                session,
+                "getTransaction",
+                [sig_info["signature"], {"maxSupportedTransactionVersion": 0, "encoding": "jsonParsed"}],
+            )
+            if not tx:
+                continue
+            meta = tx.get("meta") or {}
+            pre = {b["accountIndex"]: b for b in meta.get("preTokenBalances", [])}
+            post = {b["accountIndex"]: b for b in meta.get("postTokenBalances", [])}
+
+            delta = 0.0
+            for idx, pb in post.items():
+                if pb.get("mint") != mint or pb.get("owner") != owner:
+                    continue
+                post_amt = float(pb["uiTokenAmount"].get("uiAmount") or 0)
+                pre_amt = 0.0
+                if idx in pre:
+                    pre_amt = float(pre[idx]["uiTokenAmount"].get("uiAmount") or 0)
+                delta = post_amt - pre_amt
+                break
+            if delta <= 0:
+                continue
+            confirmations = 1 if sig_info.get("confirmationStatus") == "finalized" else 0
+            payments.append(
+                {
+                    "txid": sig_info["signature"],
+                    "amount": delta,
+                    "confirmations": confirmations,
+                    "timestamp": sig_info.get("blockTime"),
+                }
+            )
+    return payments
+
+
+async def fetch_incoming(
+    coin: str, session: aiohttp.ClientSession, meta: dict
+) -> list[dict]:
+    kind = meta.get("kind")
+    address = meta["address"]
+    if kind == "ltc":
+        return await fetch_ltc_incoming(session, address)
+    if kind == "eth":
+        return await fetch_eth_incoming(session, address)
+    if kind == "sol":
+        return await fetch_sol_incoming(session, address)
+    if kind == "erc20":
+        return await fetch_erc20_incoming(session, address, meta["contract"])
+    if kind == "trc20":
+        return await fetch_trc20_incoming(session, address, meta["contract"])
+    if kind == "spl":
+        return await fetch_spl_incoming(session, address, meta["mint"])
+    raise ValueError(f"No fetcher for coin {coin} (kind={kind})")

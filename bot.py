@@ -43,6 +43,9 @@ def payment_uri(coin: str, address: str, amount: float) -> str:
     if coin == "ETH":
         wei = int(round(amount * 1e18))
         return f"ethereum:{address}?value={wei}"
+    # Tokens (USDT/USDC) have no universal amount URI — QR just the address.
+    if not meta.get("uri_scheme"):
+        return address
     return f"{meta['uri_scheme']}:{address}?amount={amount:.{meta['decimals']}f}"
 
 
@@ -91,13 +94,24 @@ def is_staff_member(user) -> bool:
 
 
 # --- Views (persistent across restarts) ------------------------------------
-COIN_EMOJI = {"LTC": "🪙", "SOL": "🟣", "ETH": "💎"}
+COIN_EMOJI = {
+    "LTC": "🪙", "SOL": "🟣", "ETH": "💎",
+    "USDT_TRON": "💵", "USDC_SOL": "🔵", "USDC_ETH": "🔵",
+}
 
 
 class BuyButton(discord.ui.Button):
-    def __init__(self, product: dict, coin: str, meta: dict, *, row: int, multi: bool) -> None:
+    def __init__(
+        self, product: dict, coin: str, meta: dict, *, row: int | None, multi: bool,
+        label_override: str | None = None,
+    ) -> None:
         # With more than one product, show which product each button buys.
-        label = f"{product['name']} · {meta['name']}" if multi else f"Pay with {meta['name']}"
+        if label_override:
+            label = label_override
+        elif multi:
+            label = f"{product['name']} · {meta['name']}"
+        else:
+            label = f"Pay with {meta['name']}"
         super().__init__(
             label=label[:80],
             style=discord.ButtonStyle.secondary,
@@ -112,8 +126,26 @@ class BuyButton(discord.ui.Button):
         await interaction.client.open_ticket(interaction, self.coin, self.product)
 
 
+class USDCButton(discord.ui.Button):
+    """Opens a sub-menu to pick the USDC network (Solana / Ethereum)."""
+
+    def __init__(self, product: dict, *, row: int | None, multi: bool) -> None:
+        label = f"{product['name']} · USDC" if multi else "Pay with USDC"
+        super().__init__(
+            label=label[:80],
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"buy_{product['id']}_usdc",
+            emoji="🔵",
+            row=row,
+        )
+        self.product = product
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.client.open_usdc_menu(interaction, self.product)
+
+
 class OtherButton(discord.ui.Button):
-    def __init__(self, row: int = 1) -> None:
+    def __init__(self, row: int | None = 1) -> None:
         super().__init__(
             label="Pay with another method",
             style=discord.ButtonStyle.secondary,
@@ -132,11 +164,16 @@ class PurchasePanel(discord.ui.View):
         enabled = config.enabled_coins()
         products = config.PRODUCTS
         multi = len(products) > 1
-        # One row of coin buttons per product (only coins with an address show).
+        # One row of payment buttons per product.
         for index, product in enumerate(products):
-            row = min(index, 3)
-            for coin, meta in enabled.items():
-                self.add_item(BuyButton(product, coin, meta, row=row, multi=multi))
+            row = min(index, 4)
+            for coin in config.DIRECT_COINS:
+                if coin in enabled:
+                    self.add_item(
+                        BuyButton(product, coin, enabled[coin], row=row, multi=multi)
+                    )
+            if config.enabled_usdc_coins():
+                self.add_item(USDCButton(product, row=row, multi=multi))
         # A catch-all "other payment method" ticket below the coin buttons.
         self.add_item(OtherButton(row=min(len(products), 4)))
 
@@ -594,6 +631,27 @@ class PaymentBot(discord.Client):
             f"Reopened: {channel.mention}", ephemeral=True
         )
 
+    async def open_usdc_menu(self, interaction: discord.Interaction, product: dict) -> None:
+        """Show a sub-menu to choose the USDC network (Solana / Ethereum)."""
+        usdc = config.enabled_usdc_coins()
+        if not usdc:
+            await interaction.response.send_message(
+                "USDC isn't set up yet. Ping staff.", ephemeral=True
+            )
+            return
+        networks = {"USDC_SOL": "Solana", "USDC_ETH": "Ethereum"}
+        view = discord.ui.View(timeout=180)
+        for code, meta in usdc.items():
+            view.add_item(
+                BuyButton(
+                    product, code, meta, row=None, multi=False,
+                    label_override=networks.get(code, meta["name"]),
+                )
+            )
+        await interaction.response.send_message(
+            "Which network do you want to pay **USDC** on?", view=view, ephemeral=True
+        )
+
     async def open_other_ticket(self, interaction: discord.Interaction) -> None:
         """Open a manual ticket for a non-crypto / 'other' payment method."""
         await interaction.response.defer(ephemeral=True)
@@ -750,27 +808,28 @@ class PaymentBot(discord.Client):
             product["name"],
         )
 
+        ticker = meta["ticker"]
         amount_str = format_amount(expected, meta["decimals"])
         embed = discord.Embed(
             title=f"🧾 Order #{order_id} — {product['name']}",
             description=(
-                f"Send **exactly** the amount below in **{meta['name']} ({coin})**.\n"
+                f"Send **exactly** the amount below in **{meta['name']}**.\n"
                 "The amount is unique to your order — sending a different amount "
                 "may not be detected automatically."
             ),
             color=meta["color"],
         )
         embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
-        embed.add_field(name=f"1 {coin}", value=f"≈ ${coin_price:,.2f}", inline=True)
+        embed.add_field(name=f"1 {ticker}", value=f"≈ ${coin_price:,.2f}", inline=True)
         embed.add_field(name="​", value="​", inline=True)
-        embed.add_field(name=f"Amount to send ({coin})", value=f"```{amount_str}```", inline=False)
+        embed.add_field(name=f"Amount to send ({ticker})", value=f"```{amount_str}```", inline=False)
         embed.add_field(name="To this address", value=f"```{meta['address']}```", inline=False)
         embed.add_field(
             name="What happens next",
             value=(
-                f"The bot is now watching the {coin} blockchain. Once your payment "
-                f"confirms (~{meta['min_conf']} conf), staff are pinged to deliver "
-                "your key. Use **Check payment now** to refresh."
+                f"The bot is now watching for your **{meta['name']}** payment. Once it "
+                f"confirms, staff are pinged to deliver your key. Use "
+                "**Check payment now** to refresh."
             ),
             inline=False,
         )
@@ -782,7 +841,7 @@ class PaymentBot(discord.Client):
             content=user.mention, embed=embed, file=qr, view=TicketControls()
         )
         await interaction.followup.send(
-            f"Your {coin} ticket is ready: {channel.mention}", ephemeral=True
+            f"Your {meta['name']} ticket is ready: {channel.mention}", ephemeral=True
         )
 
     # --- Payment watching --------------------------------------------------
@@ -805,7 +864,7 @@ class PaymentBot(discord.Client):
             title="⏳ Payment detected — confirming",
             description=(
                 f"Saw **{format_amount(payment['amount'], meta['decimals'])} "
-                f"{order['coin']}** ({payment['confirmations']}/{meta['min_conf']} "
+                f"{meta['ticker']}** ({payment['confirmations']}/{meta['min_conf']} "
                 "confirmations). You'll be all set once it confirms."
             ),
             color=0xF1C40F,
@@ -822,7 +881,7 @@ class PaymentBot(discord.Client):
             description=(
                 f"Order **#{order['id']}** for **{order['product_name'] or config.PRODUCT_NAME}** is paid.\n"
                 f"Amount: `{format_amount(payment['amount'], meta['decimals'])} "
-                f"{order['coin']}`\nTx: `{payment['txid']}`"
+                f"{meta['ticker']}`\nTx: `{payment['txid']}`"
             ),
             color=0x2ECC71,
         )

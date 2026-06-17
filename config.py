@@ -111,9 +111,18 @@ ETHERSCAN_CHAIN_ID = _get("ETHERSCAN_CHAIN_ID", "1")
 BLOCKCYPHER_TOKEN = _get("BLOCKCYPHER_TOKEN", "")
 SOLANA_RPC_URL = _get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 COINGECKO_API_URL = _get("COINGECKO_API_URL", "https://api.coingecko.com/api/v3")
+TRONGRID_API_URL = _get("TRONGRID_API_URL", "https://api.trongrid.io")
+TRONGRID_API_KEY = _get("TRONGRID_API_KEY", "")
+
+# Token contract / mint addresses (overridable, but these are the mainnet ones).
+USDT_TRON_CONTRACT = _get("USDT_TRON_CONTRACT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+USDC_ETH_CONTRACT = _get("USDC_ETH_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+USDC_SOL_MINT = _get("USDC_SOL_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 
 
 # --- Coin metadata ---------------------------------------------------------
+# `kind`       : which blockchain fetcher handles it (ltc/sol/eth/trc20/erc20/spl).
+# `ticker`     : short symbol shown to buyers (LTC, USDT, USDC, ...).
 # `decimals`   : how many decimal places we track/display for matching.
 # `offset_step`: granularity of the unique per-order amount nudge (in coin units).
 #                Each order's amount is bumped by a small random multiple of this
@@ -122,6 +131,8 @@ COINGECKO_API_URL = _get("COINGECKO_API_URL", "https://api.coingecko.com/api/v3"
 COINS: dict[str, dict] = {
     "LTC": {
         "name": "Litecoin",
+        "ticker": "LTC",
+        "kind": "ltc",
         "coingecko_id": "litecoin",
         "decimals": 8,
         "offset_step": 0.00001,
@@ -132,6 +143,8 @@ COINS: dict[str, dict] = {
     },
     "SOL": {
         "name": "Solana",
+        "ticker": "SOL",
+        "kind": "sol",
         "coingecko_id": "solana",
         "decimals": 9,
         "offset_step": 0.00001,
@@ -142,6 +155,8 @@ COINS: dict[str, dict] = {
     },
     "ETH": {
         "name": "Ethereum",
+        "ticker": "ETH",
+        "kind": "eth",
         "coingecko_id": "ethereum",
         "decimals": 8,
         "offset_step": 0.000001,
@@ -150,9 +165,57 @@ COINS: dict[str, dict] = {
         "color": 0x627EEA,
         "uri_scheme": "ethereum",
     },
+    "USDT_TRON": {
+        "name": "USDT (Tron)",
+        "ticker": "USDT",
+        "kind": "trc20",
+        "coingecko_id": "tether",
+        "decimals": 6,
+        "offset_step": 0.001,
+        "address": _get("USDT_TRON_ADDRESS", ""),
+        "contract": USDT_TRON_CONTRACT,
+        "min_conf": _int("USDT_TRON_MIN_CONFIRMATIONS", "1"),
+        "color": 0x26A17B,
+        "uri_scheme": None,
+    },
+    "USDC_SOL": {
+        "name": "USDC (Solana)",
+        "ticker": "USDC",
+        "kind": "spl",
+        "coingecko_id": "usd-coin",
+        "decimals": 6,
+        "offset_step": 0.001,
+        "address": _get("USDC_SOL_ADDRESS", ""),
+        "mint": USDC_SOL_MINT,
+        "min_conf": _int("USDC_SOL_MIN_CONFIRMATIONS", "1"),
+        "color": 0x2775CA,
+        "uri_scheme": None,
+    },
+    "USDC_ETH": {
+        "name": "USDC (Ethereum)",
+        "ticker": "USDC",
+        "kind": "erc20",
+        "coingecko_id": "usd-coin",
+        "decimals": 6,
+        "offset_step": 0.001,
+        "address": _get("USDC_ETH_ADDRESS", ""),
+        "contract": USDC_ETH_CONTRACT,
+        "min_conf": _int("USDC_ETH_MIN_CONFIRMATIONS", "2"),
+        "color": 0x2775CA,
+        "uri_scheme": None,
+    },
 }
+
+# Buy buttons shown directly on the panel (one each).
+DIRECT_COINS = ["LTC", "SOL", "ETH", "USDT_TRON"]
+# USDC is offered via a sub-menu (pick the network) instead of a direct button.
+USDC_COINS = ["USDC_SOL", "USDC_ETH"]
 
 
 def enabled_coins() -> dict[str, dict]:
     """Coins that have a receiving address configured."""
     return {code: meta for code, meta in COINS.items() if meta["address"]}
+
+
+def enabled_usdc_coins() -> dict[str, dict]:
+    return {c: COINS[c] for c in USDC_COINS if COINS[c]["address"]}

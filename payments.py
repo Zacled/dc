@@ -92,7 +92,7 @@ async def scan_once(
             continue
 
         try:
-            incoming = await fetch_incoming(coin, session, meta["address"])
+            incoming = await fetch_incoming(coin, session, meta)
         except Exception as exc:  # noqa: BLE001 - one bad API call shouldn't kill the loop
             log.warning("Failed to scan %s: %s", coin, exc)
             incoming = None
