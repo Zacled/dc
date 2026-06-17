@@ -269,6 +269,10 @@ class PaymentBot(discord.Client):
         log.info("Logged in as %s (id=%s)", self.user, self.user.id)
         enabled = ", ".join(config.enabled_coins()) or "NONE (set addresses in .env!)"
         log.info("Accepting: %s", enabled)
+        log.info(
+            "Support role to ping: %s",
+            config.SUPPORT_ROLE_ID or "NONE (set STAFF_ROLE_ID; will ping owner)",
+        )
 
     # --- Ticket creation ---------------------------------------------------
     async def _create_ticket_channel(self, guild, user, *, prefix: str, reason: str):
@@ -370,8 +374,15 @@ class PaymentBot(discord.Client):
         )
         ticket_id = db.create_support_ticket(user.id, channel.id, reason)
 
+        # Explicitly whitelist the specific role so the bot can ping it even if
+        # the role isn't set to "mentionable" (and without needing the
+        # Mention-All-Roles permission).
+        allowed = discord.AllowedMentions(users=True)
         if config.SUPPORT_ROLE_ID:
             ping = f"<@&{config.SUPPORT_ROLE_ID}>"
+            allowed = discord.AllowedMentions(
+                users=True, roles=[discord.Object(id=config.SUPPORT_ROLE_ID)]
+            )
         elif config.OWNER_ID:
             ping = f"<@{config.OWNER_ID}>"
         else:
@@ -390,7 +401,7 @@ class PaymentBot(discord.Client):
             content=f"{user.mention} {ping}".strip(),
             embed=embed,
             view=SupportTicketControls(),
-            allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+            allowed_mentions=allowed,
         )
         await interaction.followup.send(
             f"Your support ticket is open: {channel.mention}", ephemeral=True
