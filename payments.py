@@ -19,6 +19,11 @@ from chains import fetch_incoming
 
 log = logging.getLogger("payments")
 
+# Max multiples of a coin's offset_step used to make each order's amount unique.
+# Keeps the overcharge to a few cents while still supporting plenty of
+# simultaneous orders for the same coin.
+MAX_OFFSET_UNITS = 50
+
 # Async callbacks: (order_row, payment_dict_or_None) -> None
 Callback = Callable[..., Awaitable[None]]
 
@@ -36,6 +41,9 @@ def make_unique_amount(coin: str, base_amount: float) -> float:
     exact same amount, and we couldn't tell their payments apart on a shared
     address. We add a small random multiple of the coin's `offset_step` and
     make sure it isn't already in use by another open order.
+
+    The offset is capped small (a few cents' worth) so it never meaningfully
+    changes the price — it just disambiguates concurrent orders.
     """
     meta = config.COINS[coin]
     decimals = meta["decimals"]
@@ -44,7 +52,7 @@ def make_unique_amount(coin: str, base_amount: float) -> float:
 
     base = _quantize_up(base_amount, decimals)
     for _ in range(200):
-        offset = random.randint(1, 500) * step
+        offset = random.randint(1, MAX_OFFSET_UNITS) * step
         candidate = round(base + offset, decimals)
         if candidate not in in_use:
             return candidate

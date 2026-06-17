@@ -54,7 +54,7 @@ TEST_PRODUCT_ENABLED = _get("TEST_PRODUCT_ENABLED", "true").lower() in (
     "1", "true", "yes", "on"
 )
 TEST_PRODUCT_NAME = _get("TEST_PRODUCT_NAME", "test")
-TEST_PRODUCT_PRICE_USD = _float("TEST_PRODUCT_PRICE_USD", "1")
+TEST_PRODUCT_PRICE_USD = _float("TEST_PRODUCT_PRICE_USD", "0.5")
 
 # The list of products shown on the panel. Each is {id, name, price_usd}.
 PRODUCTS: list[dict] = [
