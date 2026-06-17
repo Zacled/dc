@@ -49,9 +49,8 @@ PRODUCT_NAME = _get("PRODUCT_NAME", "Product")
 PRODUCT_PRICE_USD = _float("PRODUCT_PRICE_USD", "10")
 
 # A small permanent "test" product so you can run a cheap end-to-end test
-# without changing your real product. Off by default — set
-# TEST_PRODUCT_ENABLED=true to show it.
-TEST_PRODUCT_ENABLED = _get("TEST_PRODUCT_ENABLED", "false").lower() in (
+# without changing your real product. Set TEST_PRODUCT_ENABLED=false to hide it.
+TEST_PRODUCT_ENABLED = _get("TEST_PRODUCT_ENABLED", "true").lower() in (
     "1", "true", "yes", "on"
 )
 TEST_PRODUCT_NAME = _get("TEST_PRODUCT_NAME", "test")
