@@ -87,6 +87,10 @@ SUPPORT_TRANSCRIPT_CHANNEL_NAME = _get(
 INVITE_LOG_CHANNEL_ID = _int("INVITE_LOG_CHANNEL_ID")
 INVITE_LOG_CHANNEL_NAME = _get("INVITE_LOG_CHANNEL_NAME", "invite-log")
 
+# Role automatically given to everyone who joins (e.g. your "community" role).
+# Needs the Server Members intent + the bot's role ABOVE this role with Manage Roles.
+AUTO_ROLE_ID = _int("AUTO_ROLE_ID")
+
 # --- Key-sharing warnings --------------------------------------------------
 # The bot reads the extension's Pantry "wpbind" basket to see each code's
 # warning count, then DMs the linked buyer + posts in the warnings channel.

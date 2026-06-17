@@ -444,6 +444,21 @@ class PaymentBot(discord.Client):
 
     async def on_member_join(self, member: discord.Member) -> None:
         guild = member.guild
+
+        # Auto-role: give every new member the configured role.
+        if config.AUTO_ROLE_ID:
+            role = guild.get_role(config.AUTO_ROLE_ID)
+            if role is not None:
+                try:
+                    await member.add_roles(role, reason="Auto-role on join")
+                except discord.Forbidden:
+                    log.warning(
+                        "Can't assign auto-role in %s — need Manage Roles and the "
+                        "bot's role above @%s.", guild.name, role.name,
+                    )
+                except discord.HTTPException:
+                    pass
+
         inviter = None
         try:
             current = await guild.invites()
