@@ -325,8 +325,11 @@ class TranscriptControls(discord.ui.View):
 
 # --- Bot -------------------------------------------------------------------
 class PaymentBot(discord.Client):
-    def __init__(self) -> None:
+    def __init__(self, *, message_content: bool = True) -> None:
         intents = discord.Intents.default()
+        # Needed to read what users type (for ticket transcripts). Also requires
+        # "Message Content Intent" to be enabled in the Discord Developer Portal.
+        intents.message_content = message_content
         super().__init__(intents=intents)
         self.tree = discord.app_commands.CommandTree(self)
         self.session: aiohttp.ClientSession | None = None
@@ -852,8 +855,15 @@ async def support_panel_command(interaction: discord.Interaction) -> None:
 
 
 def main() -> None:
-    bot = PaymentBot()
-    bot.run(config.DISCORD_TOKEN)
+    try:
+        PaymentBot(message_content=True).run(config.DISCORD_TOKEN)
+    except discord.PrivilegedIntentsRequired:
+        log.warning(
+            "Message Content Intent is OFF in the Discord Developer Portal — running "
+            "without it. Ticket transcripts won't capture users' messages until you "
+            "enable it (Developer Portal -> Bot -> Privileged Gateway Intents)."
+        )
+        PaymentBot(message_content=False).run(config.DISCORD_TOKEN)
 
 
 if __name__ == "__main__":
