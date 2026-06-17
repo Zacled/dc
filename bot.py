@@ -348,6 +348,15 @@ class PaymentBot(discord.Client):
             config.SUPPORT_ROLE_ID or "NONE (set STAFF_ROLE_ID; will ping owner)",
         )
         await self._cache_all_invites()
+        # Diagnostics so the logs reveal exactly what invite tracking is missing.
+        guild = self.guilds[0] if self.guilds else None
+        ch = self._invite_log_channel(guild) if guild else None
+        log.info(
+            "Invite tracking -> members_intent=%s | log_channel=%s | invites_readable=%s",
+            self.intents.members,
+            f"#{ch.name}" if ch else f"NOT FOUND (looking for '{config.INVITE_LOG_CHANNEL_NAME}')",
+            bool(guild and guild.id in self.invite_cache),
+        )
 
     # --- Invite tracking ---------------------------------------------------
     async def _cache_all_invites(self) -> None:
