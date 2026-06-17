@@ -820,17 +820,25 @@ class PaymentBot(discord.Client):
         embed = discord.Embed(
             title=f"🧾 Order #{order_id} — {product['name']}",
             description=(
-                f"Send **exactly** the amount below in **{meta['name']}**.\n"
-                "The amount is unique to your order — sending a different amount "
-                "may not be detected automatically."
+                f"Pay in **{meta['name']}**. The amount below is **unique to your "
+                "order** — send it **exactly, to the last digit**, or it may not be "
+                "detected automatically."
             ),
             color=meta["color"],
         )
         embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
         embed.add_field(name=f"1 {ticker}", value=f"≈ ${coin_price:,.2f}", inline=True)
         embed.add_field(name="​", value="​", inline=True)
-        embed.add_field(name=f"Amount to send ({ticker})", value=f"```{amount_str}```", inline=False)
-        embed.add_field(name="To this address", value=f"```{meta['address']}```", inline=False)
+        embed.add_field(
+            name=f"💰 Amount to send ({ticker})",
+            value=f"**SEND EXACTLY THIS AMOUNT** (tap to copy):\n```\n{amount_str}\n```",
+            inline=False,
+        )
+        embed.add_field(
+            name="📬 To this address (tap to copy)",
+            value=f"```\n{meta['address']}\n```",
+            inline=False,
+        )
         embed.add_field(
             name="What happens next",
             value=(
