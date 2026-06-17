@@ -847,15 +847,15 @@ class PaymentBot(discord.Client):
             ),
             inline=False,
         )
-        embed.set_footer(text=f"Expires in {config.ORDER_EXPIRY_MINUTES} min · Order #{order_id}")
-
-        await channel.send(
-            content=user.mention, embed=embed, view=TicketControls()
+        embed.set_thumbnail(url="attachment://payment.png")  # small QR, top-right
+        embed.set_footer(
+            text=f"🔍 Tap the QR to enlarge · Expires in {config.ORDER_EXPIRY_MINUTES} min · Order #{order_id}"
         )
-        # Small QR as its own message, with the "enlarge" caption right below it.
+
         qr = make_qr_file(payment_uri(coin, meta["address"], expected))
-        await channel.send(file=qr)
-        await channel.send("🔍 *Tap the QR above to enlarge / scan it.*")
+        await channel.send(
+            content=user.mention, embed=embed, file=qr, view=TicketControls()
+        )
         # Plain, single-value messages so mobile users can long-press -> Copy Text
         # and get exactly the amount / address (embeds aren't copyable on mobile).
         await channel.send("⬇️ **Exact amount** (long-press → Copy Text)")
