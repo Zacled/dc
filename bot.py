@@ -819,11 +819,7 @@ class PaymentBot(discord.Client):
         amount_str = format_amount(expected, meta["decimals"])
         embed = discord.Embed(
             title=f"🧾 Order #{order_id} — {product['name']}",
-            description=(
-                f"Pay in **{meta['name']}**. The amount below is **unique to your "
-                "order** — send it **exactly, to the last digit**, or it may not be "
-                "detected automatically."
-            ),
+            description=f"Pay in **{meta['name']}**, follow the instructions below.",
             color=meta["color"],
         )
         embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
@@ -848,7 +844,7 @@ class PaymentBot(discord.Client):
             ),
             inline=False,
         )
-        embed.set_image(url="attachment://payment.png")
+        embed.set_thumbnail(url="attachment://payment.png")  # small QR (tap to enlarge)
         embed.set_footer(text=f"Expires in {config.ORDER_EXPIRY_MINUTES} min · Order #{order_id}")
 
         qr = make_qr_file(payment_uri(coin, meta["address"], expected))
