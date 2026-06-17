@@ -831,12 +831,12 @@ class PaymentBot(discord.Client):
         embed.add_field(name="​", value="​", inline=True)
         embed.add_field(
             name=f"💰 Amount to send ({ticker})",
-            value=f"**SEND EXACTLY THIS AMOUNT** (tap to copy):\n```\n{amount_str}\n```",
+            value=f"**SEND EXACTLY THIS AMOUNT** — copy it from the message below.\n```\n{amount_str}\n```",
             inline=False,
         )
         embed.add_field(
-            name="📬 To this address (tap to copy)",
-            value=f"```\n{meta['address']}\n```",
+            name="📬 To this address",
+            value=f"Copy it from the message below.\n```\n{meta['address']}\n```",
             inline=False,
         )
         embed.add_field(
@@ -855,6 +855,12 @@ class PaymentBot(discord.Client):
         await channel.send(
             content=user.mention, embed=embed, file=qr, view=TicketControls()
         )
+        # Plain, single-value messages so mobile users can long-press -> Copy Text
+        # and get exactly the amount / address (embeds aren't copyable on mobile).
+        await channel.send(f"⬇️ **Exact amount** (long-press → Copy Text)")
+        await channel.send(amount_str)
+        await channel.send(f"⬇️ **Address** (long-press → Copy Text)")
+        await channel.send(meta["address"])
         await interaction.followup.send(
             f"Your {meta['name']} ticket is ready: {channel.mention}", ephemeral=True
         )
