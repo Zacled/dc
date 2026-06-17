@@ -185,28 +185,26 @@ class TicketControls(discord.ui.View):
 
 
 # --- Support ticket views --------------------------------------------------
-class ReasonSelect(discord.ui.Select):
-    def __init__(self) -> None:
-        options = [
-            discord.SelectOption(label=reason[:100], value=reason[:100])
-            for reason in config.SUPPORT_REASONS
-        ]
+class ReasonButton(discord.ui.Button):
+    def __init__(self, index: int, reason: str) -> None:
         super().__init__(
-            placeholder="Choose a reason to open a support ticket…",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id="support_reason",
+            label=reason[:80],
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"support_reason_{index}",
+            row=index // 5,  # up to 5 buttons per row
         )
+        self.reason = reason
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.client.open_support_ticket(interaction, self.values[0])
+        await interaction.client.open_support_ticket(interaction, self.reason)
 
 
 class SupportPanel(discord.ui.View):
     def __init__(self) -> None:
         super().__init__(timeout=None)
-        self.add_item(ReasonSelect())
+        # One button per reason (Discord allows up to 25 buttons / 5 rows).
+        for index, reason in enumerate(config.SUPPORT_REASONS[:25]):
+            self.add_item(ReasonButton(index, reason))
 
 
 class SupportTicketControls(discord.ui.View):
@@ -614,7 +612,7 @@ async def support_panel_command(interaction: discord.Interaction) -> None:
     embed = discord.Embed(
         title="🎫 Support",
         description=(
-            "Need help? Pick a reason below to open a **private support ticket** "
+            "Need help? Click a button below to open a **private support ticket** "
             "with our staff. Please only open a ticket if you genuinely need help."
         ),
         color=0x5865F2,
