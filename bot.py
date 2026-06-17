@@ -819,7 +819,10 @@ class PaymentBot(discord.Client):
         amount_str = format_amount(expected, meta["decimals"])
         embed = discord.Embed(
             title=f"🧾 Order #{order_id} — {product['name']}",
-            description=f"Pay in **{meta['name']}**, follow the instructions below.",
+            description=(
+                f"Pay in **{meta['name']}**, follow the instructions below.\n"
+                "*Tap the QR code to enlarge it.*"
+            ),
             color=meta["color"],
         )
         embed.add_field(name="Price", value=f"${price_usd:.2f} USD", inline=True)
