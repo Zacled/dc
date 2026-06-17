@@ -184,6 +184,60 @@ class TicketControls(discord.ui.View):
         await interaction.channel.delete(reason="Ticket closed")
 
 
+# --- Support ticket views --------------------------------------------------
+class ReasonSelect(discord.ui.Select):
+    def __init__(self) -> None:
+        options = [
+            discord.SelectOption(label=reason[:100], value=reason[:100])
+            for reason in config.SUPPORT_REASONS
+        ]
+        super().__init__(
+            placeholder="Choose a reason to open a support ticket…",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="support_reason",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.client.open_support_ticket(interaction, self.values[0])
+
+
+class SupportPanel(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+        self.add_item(ReasonSelect())
+
+
+class SupportTicketControls(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Close ticket",
+        style=discord.ButtonStyle.danger,
+        custom_id="support_close",
+        emoji="🔒",
+    )
+    async def close(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        ticket = db.get_support_ticket_by_channel(interaction.channel_id)
+        is_staff = interaction.user.id == config.OWNER_ID or (
+            config.SUPPORT_ROLE_ID
+            and any(r.id == config.SUPPORT_ROLE_ID for r in getattr(interaction.user, "roles", []))
+        )
+        is_opener = ticket is not None and interaction.user.id == ticket["user_id"]
+        if not (is_staff or is_opener):
+            await interaction.response.send_message(
+                "Only the person who opened this ticket or staff can close it.",
+                ephemeral=True,
+            )
+            return
+        if ticket is not None:
+            db.set_support_status(ticket["id"], "closed")
+        await interaction.response.send_message("Closing this ticket in 5 seconds…")
+        await interaction.channel.delete(reason="Support ticket closed")
+
+
 # --- Bot -------------------------------------------------------------------
 class PaymentBot(discord.Client):
     def __init__(self) -> None:
@@ -199,8 +253,11 @@ class PaymentBot(discord.Client):
         # Register persistent views so buttons keep working after a restart.
         self.add_view(PurchasePanel())
         self.add_view(TicketControls())
+        self.add_view(SupportPanel())
+        self.add_view(SupportTicketControls())
 
         self.tree.add_command(panel_command)
+        self.tree.add_command(support_panel_command)
         if config.GUILD_ID:
             guild = discord.Object(id=config.GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -289,6 +346,56 @@ class PaymentBot(discord.Client):
         )
         await interaction.followup.send(
             f"Your ticket is ready: {channel.mention}", ephemeral=True
+        )
+
+    async def open_support_ticket(
+        self, interaction: discord.Interaction, reason: str
+    ) -> None:
+        """Open a private support ticket and ping the support/staff role."""
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        user = interaction.user
+
+        # One open support ticket per user.
+        for ticket in db.get_open_support_tickets():
+            if ticket["user_id"] == user.id:
+                channel = self.get_channel(ticket["channel_id"])
+                if channel is not None:
+                    await interaction.followup.send(
+                        f"You already have an open support ticket: {channel.mention}",
+                        ephemeral=True,
+                    )
+                    return
+
+        channel = await self._create_ticket_channel(
+            guild, user, prefix="support", reason=f"Support ticket for {user}"
+        )
+        ticket_id = db.create_support_ticket(user.id, channel.id, reason)
+
+        if config.SUPPORT_ROLE_ID:
+            ping = f"<@&{config.SUPPORT_ROLE_ID}>"
+        elif config.OWNER_ID:
+            ping = f"<@{config.OWNER_ID}>"
+        else:
+            ping = ""
+
+        embed = discord.Embed(
+            title=f"🎫 Support Ticket #{ticket_id}",
+            description=(
+                f"**Reason:** {reason}\n\n"
+                f"Thanks {user.mention}! Staff have been notified and will be with "
+                "you shortly. Go ahead and describe your issue in detail."
+            ),
+            color=0x5865F2,
+        )
+        await channel.send(
+            content=f"{user.mention} {ping}".strip(),
+            embed=embed,
+            view=SupportTicketControls(),
+            allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+        )
+        await interaction.followup.send(
+            f"Your support ticket is open: {channel.mention}", ephemeral=True
         )
 
     async def open_ticket(
@@ -492,6 +599,28 @@ async def panel_command(interaction: discord.Interaction) -> None:
     )
     embed.set_footer(text="Payments are detected automatically — send the exact amount shown.")
     await interaction.response.send_message(embed=embed, view=PurchasePanel())
+
+
+@discord.app_commands.command(
+    name="supportpanel", description="Post the support ticket panel (owner only)."
+)
+async def support_panel_command(interaction: discord.Interaction) -> None:
+    if config.OWNER_ID and interaction.user.id != config.OWNER_ID:
+        await interaction.response.send_message(
+            "Only the owner can post the panel.", ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="🎫 Support",
+        description=(
+            "Need help? Pick a reason below to open a **private support ticket** "
+            "with our staff. Please only open a ticket if you genuinely need help."
+        ),
+        color=0x5865F2,
+    )
+    embed.set_footer(text="One ticket per person — staff will respond as soon as they can.")
+    await interaction.response.send_message(embed=embed, view=SupportPanel())
 
 
 def main() -> None:

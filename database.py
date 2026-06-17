@@ -74,6 +74,53 @@ def init_db() -> None:
         if "product_name" not in cols:
             conn.execute("ALTER TABLE orders ADD COLUMN product_name TEXT DEFAULT ''")
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                channel_id  INTEGER,
+                reason      TEXT,
+                status      TEXT    NOT NULL DEFAULT 'open',
+                created_at  INTEGER NOT NULL
+            )
+            """
+        )
+
+
+# --- Support tickets -------------------------------------------------------
+def create_support_ticket(user_id: int, channel_id: int, reason: str) -> int:
+    now = int(time.time())
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO support_tickets (user_id, channel_id, reason, status, created_at) "
+            "VALUES (?, ?, ?, 'open', ?)",
+            (user_id, channel_id, reason, now),
+        )
+        return cur.lastrowid
+
+
+def get_support_ticket_by_channel(channel_id: int) -> sqlite3.Row | None:
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM support_tickets WHERE channel_id = ? ORDER BY id DESC LIMIT 1",
+            (channel_id,),
+        ).fetchone()
+
+
+def get_open_support_tickets() -> list[sqlite3.Row]:
+    with _lock, _conn() as conn:
+        return conn.execute(
+            "SELECT * FROM support_tickets WHERE status = 'open'"
+        ).fetchall()
+
+
+def set_support_status(ticket_id: int, status: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE support_tickets SET status = ? WHERE id = ?", (status, ticket_id)
+        )
+
 
 def create_order(
     user_id: int,

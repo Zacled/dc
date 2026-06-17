@@ -69,6 +69,18 @@ if TEST_PRODUCT_ENABLED:
 ORDER_EXPIRY_MINUTES = _int("ORDER_EXPIRY_MINUTES", "30")
 POLL_INTERVAL_SECONDS = _int("POLL_INTERVAL_SECONDS", "45")
 
+# --- Support tickets -------------------------------------------------------
+# Role pinged when a support ticket opens. Defaults to STAFF_ROLE_ID if set.
+SUPPORT_ROLE_ID = _int("SUPPORT_ROLE_ID") or STAFF_ROLE_ID
+# Reasons shown in the support panel dropdown (comma-separated to override).
+SUPPORT_REASONS = [
+    r.strip()
+    for r in _get(
+        "SUPPORT_REASONS", "Payment issue,Question,Report a user,Other"
+    ).split(",")
+    if r.strip()
+]
+
 # Where the SQLite order log lives. On a host with ephemeral disk (e.g. Railway)
 # point this at a mounted volume path so orders survive redeploys.
 DATABASE_PATH = _get("DATABASE_PATH", "orders.db")
