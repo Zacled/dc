@@ -118,6 +118,7 @@ TRONGRID_API_KEY = _get("TRONGRID_API_KEY", "")
 USDT_TRON_CONTRACT = _get("USDT_TRON_CONTRACT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
 USDC_ETH_CONTRACT = _get("USDC_ETH_CONTRACT", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 USDC_SOL_MINT = _get("USDC_SOL_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+USDT_SOL_MINT = _get("USDT_SOL_MINT", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB")
 
 
 # --- Coin metadata ---------------------------------------------------------
@@ -178,6 +179,19 @@ COINS: dict[str, dict] = {
         "color": 0x26A17B,
         "uri_scheme": None,
     },
+    "USDT_SOL": {
+        "name": "USDT (Solana)",
+        "ticker": "USDT",
+        "kind": "spl",
+        "coingecko_id": "tether",
+        "decimals": 6,
+        "offset_step": 0.001,
+        "address": _get("USDT_SOL_ADDRESS", ""),
+        "mint": USDT_SOL_MINT,
+        "min_conf": _int("USDT_SOL_MIN_CONFIRMATIONS", "1"),
+        "color": 0x26A17B,
+        "uri_scheme": None,
+    },
     "USDC_SOL": {
         "name": "USDC (Solana)",
         "ticker": "USDC",
@@ -206,10 +220,23 @@ COINS: dict[str, dict] = {
     },
 }
 
-# Buy buttons shown directly on the panel (one each).
-DIRECT_COINS = ["LTC", "SOL", "ETH", "USDT_TRON"]
-# USDC is offered via a sub-menu (pick the network) instead of a direct button.
-USDC_COINS = ["USDC_SOL", "USDC_ETH"]
+# Native coins shown as direct buttons on the panel (one each).
+DIRECT_COINS = ["LTC", "SOL", "ETH"]
+
+# Stablecoins are offered via a button -> network sub-menu. Ethereum networks
+# are intentionally left out (they'd need an Etherscan API key).
+STABLE_GROUPS = {
+    "USDT": ["USDT_TRON", "USDT_SOL"],
+    "USDC": ["USDC_SOL"],
+}
+
+# Friendly network name shown on each sub-menu button.
+NETWORK_NAMES = {
+    "USDT_TRON": "Tron",
+    "USDT_SOL": "Solana",
+    "USDC_SOL": "Solana",
+    "USDC_ETH": "Ethereum",
+}
 
 
 def enabled_coins() -> dict[str, dict]:
@@ -217,5 +244,6 @@ def enabled_coins() -> dict[str, dict]:
     return {code: meta for code, meta in COINS.items() if meta["address"]}
 
 
-def enabled_usdc_coins() -> dict[str, dict]:
-    return {c: COINS[c] for c in USDC_COINS if COINS[c]["address"]}
+def enabled_group_networks(ticker: str) -> dict[str, dict]:
+    """Configured (address-set) networks for a stablecoin group, e.g. 'USDT'."""
+    return {c: COINS[c] for c in STABLE_GROUPS.get(ticker, []) if COINS[c]["address"]}

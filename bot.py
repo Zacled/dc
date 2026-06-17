@@ -96,8 +96,9 @@ def is_staff_member(user) -> bool:
 # --- Views (persistent across restarts) ------------------------------------
 COIN_EMOJI = {
     "LTC": "🪙", "SOL": "🟣", "ETH": "💎",
-    "USDT_TRON": "💵", "USDC_SOL": "🔵", "USDC_ETH": "🔵",
+    "USDT_TRON": "💵", "USDT_SOL": "💵", "USDC_SOL": "🔵", "USDC_ETH": "🔵",
 }
+TICKER_EMOJI = {"USDT": "💵", "USDC": "🔵"}
 
 
 class BuyButton(discord.ui.Button):
@@ -126,22 +127,23 @@ class BuyButton(discord.ui.Button):
         await interaction.client.open_ticket(interaction, self.coin, self.product)
 
 
-class USDCButton(discord.ui.Button):
-    """Opens a sub-menu to pick the USDC network (Solana / Ethereum)."""
+class StablecoinButton(discord.ui.Button):
+    """Opens a sub-menu to pick the network for a stablecoin (USDT/USDC)."""
 
-    def __init__(self, product: dict, *, row: int | None, multi: bool) -> None:
-        label = f"{product['name']} · USDC" if multi else "Pay with USDC"
+    def __init__(self, product: dict, ticker: str, *, row: int | None, multi: bool) -> None:
+        label = f"{product['name']} · {ticker}" if multi else f"Pay with {ticker}"
         super().__init__(
             label=label[:80],
             style=discord.ButtonStyle.secondary,
-            custom_id=f"buy_{product['id']}_usdc",
-            emoji="🔵",
+            custom_id=f"buy_{product['id']}_{ticker.lower()}",
+            emoji=TICKER_EMOJI.get(ticker),
             row=row,
         )
         self.product = product
+        self.ticker = ticker
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.client.open_usdc_menu(interaction, self.product)
+        await interaction.client.open_stable_menu(interaction, self.product, self.ticker)
 
 
 class OtherButton(discord.ui.Button):
@@ -172,8 +174,10 @@ class PurchasePanel(discord.ui.View):
                     self.add_item(
                         BuyButton(product, coin, enabled[coin], row=row, multi=multi)
                     )
-            if config.enabled_usdc_coins():
-                self.add_item(USDCButton(product, row=row, multi=multi))
+            # A button per stablecoin group that has at least one network set up.
+            for ticker in config.STABLE_GROUPS:
+                if config.enabled_group_networks(ticker):
+                    self.add_item(StablecoinButton(product, ticker, row=row, multi=multi))
         # A catch-all "other payment method" ticket below the coin buttons.
         self.add_item(OtherButton(row=min(len(products), 4)))
 
@@ -631,25 +635,28 @@ class PaymentBot(discord.Client):
             f"Reopened: {channel.mention}", ephemeral=True
         )
 
-    async def open_usdc_menu(self, interaction: discord.Interaction, product: dict) -> None:
-        """Show a sub-menu to choose the USDC network (Solana / Ethereum)."""
-        usdc = config.enabled_usdc_coins()
-        if not usdc:
+    async def open_stable_menu(
+        self, interaction: discord.Interaction, product: dict, ticker: str
+    ) -> None:
+        """Show a sub-menu to choose the network for a stablecoin (USDT/USDC)."""
+        networks = config.enabled_group_networks(ticker)
+        if not networks:
             await interaction.response.send_message(
-                "USDC isn't set up yet. Ping staff.", ephemeral=True
+                f"{ticker} isn't set up yet. Ping staff.", ephemeral=True
             )
             return
-        networks = {"USDC_SOL": "Solana", "USDC_ETH": "Ethereum"}
         view = discord.ui.View(timeout=180)
-        for code, meta in usdc.items():
+        for code, meta in networks.items():
             view.add_item(
                 BuyButton(
                     product, code, meta, row=None, multi=False,
-                    label_override=networks.get(code, meta["name"]),
+                    label_override=config.NETWORK_NAMES.get(code, meta["name"]),
                 )
             )
         await interaction.response.send_message(
-            "Which network do you want to pay **USDC** on?", view=view, ephemeral=True
+            f"Which network do you want to pay **{ticker}** on?",
+            view=view,
+            ephemeral=True,
         )
 
     async def open_other_ticket(self, interaction: discord.Interaction) -> None:
