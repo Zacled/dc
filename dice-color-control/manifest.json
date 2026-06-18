@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Dice Color Control",
+  "version": "1.0.0",
+  "description": "Choose which color onlinedice.org shows. Local display override via an on-page element picker.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://onlinedice.org/*",
+    "https://www.onlinedice.org/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dice Color Control"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://onlinedice.org/*",
+        "https://www.onlinedice.org/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

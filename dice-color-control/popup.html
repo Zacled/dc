@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Dice Color Control</title>
+</head>
+<body>
+  <header>
+    <h1>Dice Color Control</h1>
+    <label class="switch">
+      <input type="checkbox" id="enabled" />
+      <span class="slider"></span>
+      <span class="switch-label">Force</span>
+    </label>
+  </header>
+
+  <p id="status" class="status"></p>
+
+  <section>
+    <div class="row">
+      <button id="pickColor" class="btn">🎯 Pick color box</button>
+      <span id="colorSel" class="sel">not set</span>
+    </div>
+    <div class="row">
+      <button id="pickLabel" class="btn btn-ghost">🏷️ Pick name text</button>
+      <span id="labelSel" class="sel">optional</span>
+    </div>
+    <label class="check"><input type="checkbox" id="forceText" /> Also overwrite color name text</label>
+  </section>
+
+  <section>
+    <h2>Target color</h2>
+    <div id="swatches" class="swatches"></div>
+    <div class="row custom">
+      <input type="color" id="customColor" value="#e11d48" />
+      <input type="text" id="customName" placeholder="Name (e.g. Red)" />
+      <button id="setCustom" class="btn">Set</button>
+    </div>
+    <div class="current">Now forcing: <b id="currentTarget">—</b></div>
+  </section>
+
+  <section>
+    <h2>Mode</h2>
+    <div class="row">
+      <label class="radio"><input type="radio" name="mode" value="fixed" /> Fixed</label>
+      <label class="radio"><input type="radio" name="mode" value="sequence" /> Sequence</label>
+    </div>
+    <div id="seqBox">
+      <div class="row">
+        <button id="addSeq" class="btn btn-ghost">+ Add current to sequence</button>
+        <button id="clearSeq" class="btn btn-ghost">Clear</button>
+      </div>
+      <ol id="seqList" class="seqlist"></ol>
+    </div>
+  </section>
+
+  <section>
+    <h2>Learn site colors</h2>
+    <label class="check"><input type="checkbox" id="learn" /> Record the real colors as they appear</label>
+    <div id="learned" class="swatches"></div>
+  </section>
+
+  <footer>
+    <button id="reset" class="btn btn-ghost small">Reset all</button>
+    <span class="hint">Local display override only.</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
