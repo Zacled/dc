@@ -1,172 +1,123 @@
-/* Dice Color Control — popup UI */
+/* Dice Color Control — popup (block / force colors) */
 (() => {
   "use strict";
 
   const STORE_KEY = "dcc";
 
-  const PRESETS = [
-    { name: "Red", css: "#e11d48" },
-    { name: "Orange", css: "#f97316" },
-    { name: "Yellow", css: "#eab308" },
-    { name: "Green", css: "#22c55e" },
-    { name: "Blue", css: "#3b82f6" },
-    { name: "Purple", css: "#a855f7" },
-    { name: "Pink", css: "#ec4899" },
-    { name: "Cyan", css: "#06b6d4" },
-    { name: "Brown", css: "#92400e" },
-    { name: "White", css: "#ffffff" },
-    { name: "Gray", css: "#6b7280" },
-    { name: "Black", css: "#111111" }
+  const COLORS = [
+    { name: "Red", css: "#e23b3b" },
+    { name: "Orange", css: "#ef8a2b" },
+    { name: "Yellow", css: "#f4c531" },
+    { name: "Green", css: "#34a23f" },
+    { name: "Blue", css: "#3f6fd1" },
+    { name: "Purple", css: "#8e44c9" }
   ];
 
   const DEFAULT_CFG = {
-    enabled: false,
-    mode: "fixed",
-    colorSelector: "",
-    labelSelector: "",
-    forceText: true,
-    target: { name: "Red", css: "#e11d48" },
-    sequence: [],
-    learn: false,
-    learned: []
+    enabled: true,
+    blocked: [],
+    forced: "",
+    manualSelector: ""
   };
 
   let cfg = Object.assign({}, DEFAULT_CFG);
   let tabId = null;
 
   const $ = (id) => document.getElementById(id);
-
-  function save() {
-    chrome.storage.local.set({ [STORE_KEY]: cfg });
-  }
-
-  function sameColor(a, b) {
-    return a && b && a.css === b.css && a.name === b.name;
-  }
+  const save = () => chrome.storage.local.set({ [STORE_KEY]: cfg });
 
   // ---- render ---------------------------------------------------------------
 
   function render() {
     $("enabled").checked = !!cfg.enabled;
-    $("forceText").checked = !!cfg.forceText;
-    $("learn").checked = !!cfg.learn;
-    $("colorSel").textContent = cfg.colorSelector || "not set";
-    $("colorSel").title = cfg.colorSelector || "";
-    $("labelSel").textContent = cfg.labelSelector || "optional";
-    $("labelSel").title = cfg.labelSelector || "";
 
-    for (const r of document.querySelectorAll('input[name="mode"]')) {
-      r.checked = r.value === cfg.mode;
-    }
-    $("seqBox").hidden = cfg.mode !== "sequence";
+    const block = $("blockRow");
+    const force = $("forceRow");
+    block.innerHTML = "";
+    force.innerHTML = "";
 
-    $("currentTarget").textContent = cfg.target ? `${cfg.target.name} (${cfg.target.css})` : "—";
+    for (const c of COLORS) {
+      // Block chip
+      const b = document.createElement("div");
+      b.className = "chip" + (cfg.blocked.includes(c.name) ? " blocked" : "");
+      b.style.background = c.css;
+      b.textContent = c.name;
+      if (cfg.blocked.includes(c.name)) {
+        const m = document.createElement("span");
+        m.className = "mark";
+        m.textContent = "🚫";
+        b.appendChild(m);
+      }
+      b.title = cfg.blocked.includes(c.name) ? `${c.name} blocked — tap to allow` : `Block ${c.name}`;
+      b.addEventListener("click", () => toggleBlock(c.name));
+      block.appendChild(b);
 
-    renderSwatches();
-    renderLearned();
-    renderSequence();
-  }
-
-  function renderSwatches() {
-    const box = $("swatches");
-    box.innerHTML = "";
-    for (const c of PRESETS) {
-      const el = document.createElement("div");
-      el.className = "swatch" + (sameColor(c, cfg.target) ? " sel-on" : "");
-      el.style.background = c.css;
-      el.title = `${c.name} ${c.css}`;
-      el.addEventListener("click", () => {
-        cfg.target = { name: c.name, css: c.css };
-        save();
-        render();
-      });
-      box.appendChild(el);
-    }
-  }
-
-  function renderLearned() {
-    const box = $("learned");
-    box.innerHTML = "";
-    if (!cfg.learned.length) {
-      box.innerHTML = '<span class="hint">None yet — enable learning and roll.</span>';
-      return;
-    }
-    for (const c of cfg.learned) {
-      const el = document.createElement("div");
-      el.className = "swatch" + (sameColor(c, cfg.target) ? " sel-on" : "");
-      el.style.background = c.css;
-      el.title = `${c.name} ${c.css}`;
-      el.addEventListener("click", () => {
-        cfg.target = { name: c.name, css: c.css };
-        save();
-        render();
-      });
-      box.appendChild(el);
+      // Force chip
+      const f = document.createElement("div");
+      f.className = "chip" + (cfg.forced === c.name ? " forced" : "");
+      f.style.background = c.css;
+      f.textContent = c.name;
+      if (cfg.forced === c.name) {
+        const m = document.createElement("span");
+        m.className = "mark";
+        m.textContent = "✅";
+        f.appendChild(m);
+      }
+      f.title = cfg.forced === c.name ? `Forcing ${c.name} — tap to stop` : `Force ${c.name} on every die`;
+      f.addEventListener("click", () => toggleForce(c.name));
+      force.appendChild(f);
     }
   }
 
-  function renderSequence() {
-    const ol = $("seqList");
-    ol.innerHTML = "";
-    cfg.sequence.forEach((c, i) => {
-      const li = document.createElement("li");
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.style.background = c.css;
-      const txt = document.createElement("span");
-      txt.textContent = `${c.name}`;
-      const rm = document.createElement("button");
-      rm.textContent = "✕";
-      rm.title = "Remove";
-      rm.addEventListener("click", () => {
-        cfg.sequence.splice(i, 1);
-        save();
-        render();
-      });
-      li.append(chip, txt, rm);
-      ol.appendChild(li);
-    });
+  function toggleBlock(name) {
+    if (cfg.blocked.includes(name)) {
+      cfg.blocked = cfg.blocked.filter((n) => n !== name);
+    } else {
+      cfg.blocked.push(name);
+      if (cfg.forced === name) cfg.forced = ""; // can't force a blocked color
+    }
+    commit();
   }
 
-  // ---- talk to the page -----------------------------------------------------
-
-  function onActiveTab(cb) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs && tabs[0];
-      cb(tab);
-    });
+  function toggleForce(name) {
+    cfg.forced = cfg.forced === name ? "" : name;
+    if (cfg.forced) cfg.blocked = cfg.blocked.filter((n) => n !== name); // forcing un-blocks it
+    commit();
   }
+
+  function commit() {
+    cfg.enabled = true; // any action turns it on so something actually happens
+    $("enabled").checked = true;
+    save();
+    render();
+    if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "applyNow" }, () => void chrome.runtime.lastError);
+  }
+
+  // ---- site connection ------------------------------------------------------
 
   function checkSite() {
-    onActiveTab((tab) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
       const status = $("status");
       const isSite = tab && /^https:\/\/(www\.)?onlinedice\.org\//.test(tab.url || "");
       if (!isSite) {
-        status.textContent = "Open onlinedice.org in this tab to use the picker.";
+        status.textContent = "Open onlinedice.org to use this.";
         status.className = "status warn";
         return;
       }
       tabId = tab.id;
       chrome.tabs.sendMessage(tabId, { type: "ping" }, (resp) => {
         if (chrome.runtime.lastError || !resp) {
-          status.textContent = "Loaded — reload the dice page if Pick does nothing.";
+          status.textContent = "Reload the dice page, then reopen this.";
           status.className = "status warn";
-        } else {
-          status.textContent = "Connected to onlinedice.org.";
+        } else if (resp.dice > 0) {
+          status.textContent = `Connected — ${resp.dice} dice detected.`;
           status.className = "status ok";
+        } else {
+          status.textContent = "Connected, but no dice spotted yet — roll once.";
+          status.className = "status warn";
         }
       });
-    });
-  }
-
-  function startPick(kind) {
-    if (tabId == null) {
-      checkSite();
-      return;
-    }
-    chrome.tabs.sendMessage(tabId, { type: "pick", kind }, () => {
-      // Close the popup so the user can interact with the page.
-      window.close();
     });
   }
 
@@ -182,45 +133,12 @@
     $("enabled").addEventListener("change", (e) => {
       cfg.enabled = e.target.checked;
       save();
-      if (cfg.enabled && tabId != null) chrome.tabs.sendMessage(tabId, { type: "applyNow" });
-    });
-    $("forceText").addEventListener("change", (e) => {
-      cfg.forceText = e.target.checked;
-      save();
-    });
-    $("learn").addEventListener("change", (e) => {
-      cfg.learn = e.target.checked;
-      save();
+      if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "applyNow" }, () => void chrome.runtime.lastError);
     });
 
-    $("pickColor").addEventListener("click", () => startPick("color"));
-    $("pickLabel").addEventListener("click", () => startPick("label"));
-
-    for (const r of document.querySelectorAll('input[name="mode"]')) {
-      r.addEventListener("change", (e) => {
-        cfg.mode = e.target.value;
-        save();
-        render();
-      });
-    }
-
-    $("setCustom").addEventListener("click", () => {
-      const css = $("customColor").value;
-      const name = ($("customName").value || "").trim() || css;
-      cfg.target = { name, css };
-      save();
-      render();
-    });
-
-    $("addSeq").addEventListener("click", () => {
-      if (cfg.target) cfg.sequence.push({ name: cfg.target.name, css: cfg.target.css });
-      save();
-      render();
-    });
-    $("clearSeq").addEventListener("click", () => {
-      cfg.sequence = [];
-      save();
-      render();
+    $("forceOff").addEventListener("click", () => {
+      cfg.forced = "";
+      commit();
     });
 
     $("reset").addEventListener("click", () => {
@@ -228,9 +146,17 @@
       save();
       render();
     });
+
+    $("pick").addEventListener("click", () => {
+      if (tabId == null) return checkSite();
+      chrome.tabs.sendMessage(tabId, { type: "pick" }, () => window.close());
+    });
+    $("autoDetect").addEventListener("click", () => {
+      cfg.manualSelector = "";
+      save();
+    });
   }
 
-  // Keep popup in sync if the content script writes (e.g. learned colors, picked selectors).
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[STORE_KEY]) return;
     cfg = Object.assign({}, DEFAULT_CFG, changes[STORE_KEY].newValue);
