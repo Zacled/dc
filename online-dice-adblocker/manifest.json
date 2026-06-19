@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Online-Dice Ad Blocker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Blocks ads on online-dice.com and slips past its anti-adblock detector.",
   "minimum_chrome_version": "111",
 
@@ -10,7 +10,10 @@
   ],
 
   "host_permissions": [
-    "*://*.online-dice.com/*"
+    "*://*.online-dice.com/*",
+    "*://*.googlesyndication.com/*",
+    "*://securepubads.g.doubleclick.net/*",
+    "*://*.googletagservices.com/*"
   ],
 
   "declarative_net_request": {
@@ -22,6 +25,13 @@
       }
     ]
   },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["adsbygoogle-stub.js", "gpt-stub.js"],
+      "matches": ["*://*.online-dice.com/*"]
+    }
+  ],
 
   "content_scripts": [
     {

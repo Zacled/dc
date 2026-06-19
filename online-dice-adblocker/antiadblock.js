@@ -47,6 +47,9 @@
   lock('canShowAds', true);
   lock('canADS', true);
   lock('isAdsDisplayed', true);
+  // Real AdSense sets google_ad_status = 1 when an ad is served. Many
+  // detectors read it directly, so seed it before the page runs.
+  try { window.google_ad_status = 1; } catch (e) {}
   // Some detectors flip a "blocker present" flag instead — keep it false.
   lock('adBlockDetected', false);
   lock('adblockDetected', false);
